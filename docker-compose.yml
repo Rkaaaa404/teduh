@@ -1,12 +1,30 @@
 services:
   # ============================================================
-  # PostgreSQL + PostGIS Database
+  # PostgreSQL + PostGIS + pgRouting (Lightweight Laptop Tuning)
+  # Default Daily Mode: Runs automatically with `docker compose up -d`
   # ============================================================
   postgres:
     build:
       context: .
       dockerfile: Dockerfile.postgres
     container_name: commute_cool_db
+    mem_limit: 512m
+    cpus: 1.5
+    shm_size: 128mb
+    command:
+      - "postgres"
+      - "-c"
+      - "shared_buffers=128MB"
+      - "-c"
+      - "work_mem=8MB"
+      - "-c"
+      - "maintenance_work_mem=64MB"
+      - "-c"
+      - "effective_cache_size=256MB"
+      - "-c"
+      - "synchronous_commit=off"
+      - "-c"
+      - "max_connections=50"
     ports:
       - "5432:5432"
     environment:
@@ -16,47 +34,51 @@ services:
     volumes:
       - ./database/init.sql:/docker-entrypoint-initdb.d/01_init.sql
       - ./database/seed_transit.sql:/docker-entrypoint-initdb.d/02_seed_transit.sql
+      - ./database/migrate_teduh.sql:/docker-entrypoint-initdb.d/03_migrate_teduh.sql
+      - ./database/optimize_serving.sql:/docker-entrypoint-initdb.d/04_optimize_serving.sql
       - pgdata:/var/lib/postgresql/data
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U cc_user -d commute_cool"]
       interval: 5s
       timeout: 3s
       retries: 10
+    restart: unless-stopped
 
   # ============================================================
-  # Apache Spark Pipeline (Local Mode)
-  # Runs: Ingestion (real APIs) → 5 Spark Jobs → Data in PostGIS
-  # One-shot: exits after pipeline completes
+  # FastAPI Backend (Async Pool + Serving Layer + Fast Refresh)
+  # Default Daily Mode: Runs automatically with `docker compose up -d`
   # ============================================================
-  spark-pipeline:
+  api:
     build:
       context: .
-      dockerfile: Dockerfile.spark
-    container_name: commute_cool_spark
+      dockerfile: Dockerfile.api
+    container_name: commute_cool_api
+    mem_limit: 256m
+    cpus: 1.0
+    ports:
+      - "8000:8000"
     depends_on:
       postgres:
         condition: service_healthy
-      namenode:
-        condition: service_started
     environment:
       DATABASE_URL: postgresql://cc_user:cc_dev_pass@postgres:5432/commute_cool
+      ASYNC_DATABASE_URL: postgresql+asyncpg://cc_user:cc_dev_pass@postgres:5432/commute_cool
       RAW_DATA_DIR: /app/data/raw
-      SPARK_MASTER_URL: "local[*]"
       TOMTOM_API_KEY: ${TOMTOM_API_KEY:-}
       WAQI_API_TOKEN: ${WAQI_API_TOKEN:-}
-      PYSPARK_PYTHON: python3
-      SPARK_LOCAL_DIRS: /tmp/spark
-      HDFS_NAMENODE: hdfs://namenode:9000
-    command: ["-m", "spark_jobs.run_pipeline"]
     volumes:
       - spark_data:/app/data
+    restart: unless-stopped
 
   # ============================================================
-  # HDFS Namenode & Datanode (Hadoop Cluster)
+  # HDFS Namenode & Datanode (On-Demand via `--profile pipeline`)
   # ============================================================
   namenode:
     image: bde2020/hadoop-namenode:2.0.0-hadoop3.2.1-java8
     container_name: commute_cool_namenode
+    profiles: ["pipeline"]
+    mem_limit: 512m
+    cpus: 1.0
     ports:
       - "9870:9870"
       - "9000:9000"
@@ -66,10 +88,19 @@ services:
       - ./hadoop.env
     volumes:
       - hadoop_namenode:/hadoop/dfs/name
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:9870/ >/dev/null || exit 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 5s
 
   datanode:
     image: bde2020/hadoop-datanode:2.0.0-hadoop3.2.1-java8
     container_name: commute_cool_datanode
+    profiles: ["pipeline"]
+    mem_limit: 384m
+    cpus: 1.0
     ports:
       - "9864:9864"
     environment:
@@ -79,27 +110,47 @@ services:
     volumes:
       - hadoop_datanode:/hadoop/dfs/data
     depends_on:
-      - namenode
+      namenode:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:9864/ >/dev/null || exit 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 15
+      start_period: 5s
 
   # ============================================================
-  # FastAPI Backend (connects to real PostGIS data)
+  # Apache Spark + Sedona + MLlib Pipeline (On-Demand `--profile pipeline`)
+  # One-shot smart batch: skips OSM wipe if populated, runs 1 shared JVM
   # ============================================================
-  api:
+  spark-pipeline:
     build:
       context: .
-      dockerfile: Dockerfile.api
-    container_name: commute_cool_api
-    ports:
-      - "8000:8000"
+      dockerfile: Dockerfile.spark
+    container_name: commute_cool_spark
+    profiles: ["pipeline"]
+    mem_limit: 1536m
+    cpus: 2.0
     depends_on:
       postgres:
         condition: service_healthy
+      namenode:
+        condition: service_healthy
+      datanode:
+        condition: service_healthy
     environment:
       DATABASE_URL: postgresql://cc_user:cc_dev_pass@postgres:5432/commute_cool
-      ASYNC_DATABASE_URL: postgresql+asyncpg://cc_user:cc_dev_pass@postgres:5432/commute_cool
+      RAW_DATA_DIR: /app/data/raw
+      SPARK_MASTER_URL: "local[2]"
+      SPARK_DRIVER_MEMORY: "1g"
       TOMTOM_API_KEY: ${TOMTOM_API_KEY:-}
       WAQI_API_TOKEN: ${WAQI_API_TOKEN:-}
-    restart: unless-stopped
+      PYSPARK_PYTHON: python3
+      SPARK_LOCAL_DIRS: /tmp/spark
+      HDFS_NAMENODE: hdfs://namenode:9000
+    command: ["-m", "spark_jobs.run_pipeline"]
+    volumes:
+      - spark_data:/app/data
 
 volumes:
   pgdata:

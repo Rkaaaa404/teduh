@@ -7,7 +7,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libpq-dev \
     && rm -rf /var/lib/apt/lists/*
 
-# Install Python dependencies (upgrade pip first to fix timeout issues on slow networks)
+# Install Python dependencies
 COPY requirements-spark.txt /tmp/requirements.txt
 RUN pip install --upgrade pip && \
     pip install --no-cache-dir --default-timeout=300 -r /tmp/requirements.txt
@@ -25,6 +25,7 @@ RUN mkdir -p /opt/spark/jars && \
 WORKDIR /app
 COPY spark_jobs/ ./spark_jobs/
 COPY ingestion/ ./ingestion/
+COPY database/ ./database/
 RUN mkdir -p data
 
 ENV PYTHONPATH=/app

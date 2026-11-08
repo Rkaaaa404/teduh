@@ -1,166 +1,171 @@
-"""Spark Job 6: AI/ML Predictive Simulations (Decision Tree / Linear Regression).
+"""Spark Job 6: AI/ML Predictive Simulations (Decision Tree Regressor).
 
-Uses PySpark MLlib to train a predictive model on segment environmental features
-(NDVI, LST, shade ratio, traffic, AQI) to predict the Thermal Comfort Score (TCS).
-Runs scenario simulations for urban planners:
-1. Green Scenario: Increase tree canopy/NDVI (+0.25)
-2. Cool Pavement Scenario: Reduce surface temperature (-3.5C)
-Saves predictions to PostgreSQL serving layer for dashboard analysis.
+Optimized Architecture:
+- Reuses shared SparkSession (`spark_jobs.session`)
+- Deduplicates per-segment inputs cleanly so `tcs_simulations` never gets duplicate rows
+- Caches assembled vector DataFrame in memory for fast model training + 2 scenario transforms
 """
 from __future__ import annotations
 
-import os
-from datetime import datetime
-
 from pyspark.sql import SparkSession, DataFrame
-from pyspark.sql.functions import col, lit, current_timestamp, when
+from pyspark.sql.functions import col, current_timestamp, when, lit
 from pyspark.ml.feature import VectorAssembler
-from pyspark.ml.regression import DecisionTreeRegressor, LinearRegression
+from pyspark.ml.regression import DecisionTreeRegressor
 
-# --- Configuration ---
 from spark_jobs.config import JDBC_URL, JDBC_PROPS, GOLD_DIR
-
-
-def create_spark_session() -> SparkSession:
-    """Create SparkSession with MLlib support."""
-    return (
-        SparkSession.builder
-        .appName("CommuteCool_MLPredictor")
-        .master(os.getenv("SPARK_MASTER_URL", "local[*]"))
-        .config("spark.driver.memory", "2g")
-        .getOrCreate()
-    )
+from spark_jobs.session import get_or_create_spark
 
 
 def load_dataset(spark: SparkSession) -> DataFrame:
-    """Load latest scores from HDFS Gold (or PostGIS fallbacks) and assemble dataset."""
-    print("  Loading layers for ML training...")
-    
-    # 1. Base segments
-    segments_df = (
-        spark.read.jdbc(JDBC_URL, "segments", properties=JDBC_PROPS)
-        .select("segment_id")
+    """Assemble deduplicated segment feature dataset from Gold Parquet or PostGIS."""
+    segments_df = spark.read.jdbc(
+        JDBC_URL,
+        "(SELECT segment_id FROM segments) AS seg_ids",
+        properties=JDBC_PROPS,
     )
-    
-    # 2. Raster scores (NDVI/LST)
-    try:
-        raster_df = spark.read.parquet(f"{GOLD_DIR}/segment_raster_scores").select("segment_id", "avg_ndvi", "avg_lst")
-    except Exception:
-        raster_df = spark.read.jdbc(JDBC_URL, "segment_raster_scores", properties=JDBC_PROPS).select("segment_id", "avg_ndvi", "avg_lst")
-        
-    # 3. Shadows (Average shade ratio)
-    try:
-        shadow_df = spark.read.parquet(f"{GOLD_DIR}/segment_shadows").groupBy("segment_id").avg("shade_ratio").withColumnRenamed("avg(shade_ratio)", "avg_shade")
-    except Exception:
-        shadow_df = spark.read.jdbc(JDBC_URL, "segment_shadows", properties=JDBC_PROPS).groupBy("segment_id").avg("shade_ratio").withColumnRenamed("avg(shade_ratio)", "avg_shade")
-        
-    # 4. Traffic/AQI
-    try:
-        traffic_aqi_df = spark.read.parquet(f"{GOLD_DIR}/segment_traffic_aqi").select("segment_id", "congestion_ratio", "aqi_value")
-    except Exception:
-        traffic_aqi_df = spark.read.jdbc(JDBC_URL, "segments", properties=JDBC_PROPS).select("segment_id").withColumn("congestion_ratio", lit(0.3)).withColumn("aqi_value", lit(50.0))
-        
-    # 5. TCS Target values (actual values)
-    try:
-        tcs_df = spark.read.parquet(f"{GOLD_DIR}/thermal_comfort_scores").select("segment_id", "tcs_value")
-    except Exception:
-        tcs_df = spark.read.jdbc(JDBC_URL, "thermal_comfort_scores", properties=JDBC_PROPS).select("segment_id", "tcs_value")
 
-    # Join dataset
+    try:
+        raster_df = (
+            spark.read.parquet(f"{GOLD_DIR}/segment_raster_scores")
+            .select("segment_id", "avg_ndvi", "avg_lst")
+            .dropDuplicates(["segment_id"])
+        )
+    except Exception:
+        raster_df = spark.read.jdbc(
+            JDBC_URL,
+            "(SELECT segment_id, avg_ndvi, avg_lst FROM segment_live_comfort) AS rs_live",
+            properties=JDBC_PROPS,
+        )
+
+    try:
+        shadow_df = (
+            spark.read.parquet(f"{GOLD_DIR}/segment_shadows")
+            .groupBy("segment_id")
+            .avg("shade_ratio")
+            .withColumnRenamed("avg(shade_ratio)", "avg_shade")
+        )
+    except Exception:
+        shadow_df = spark.read.jdbc(
+            JDBC_URL,
+            "(SELECT segment_id, AVG(shade_ratio) AS avg_shade FROM segment_shadows GROUP BY segment_id) AS sh_avg",
+            properties=JDBC_PROPS,
+        )
+
+    try:
+        traffic_aqi_df = (
+            spark.read.parquet(f"{GOLD_DIR}/segment_traffic_aqi")
+            .select("segment_id", "congestion_ratio", "aqi_value")
+            .dropDuplicates(["segment_id"])
+        )
+    except Exception:
+        traffic_aqi_df = spark.read.jdbc(
+            JDBC_URL,
+            "(SELECT segment_id, traffic_level AS congestion_ratio, aqi_value FROM segment_live_comfort) AS ta_live",
+            properties=JDBC_PROPS,
+        )
+
+    try:
+        tcs_df = (
+            spark.read.parquet(f"{GOLD_DIR}/thermal_comfort_scores")
+            .select("segment_id", "tcs_value")
+            .dropDuplicates(["segment_id"])
+        )
+    except Exception:
+        tcs_df = spark.read.jdbc(
+            JDBC_URL,
+            "(SELECT segment_id, tcs_value FROM segment_live_comfort) AS tcs_live",
+            properties=JDBC_PROPS,
+        )
+
     dataset_df = (
         segments_df
-        .join(raster_df, "segment_id", "inner")
-        .join(shadow_df, "segment_id", "inner")
-        .join(traffic_aqi_df, "segment_id", "inner")
+        .join(raster_df, "segment_id", "left")
+        .join(shadow_df, "segment_id", "left")
+        .join(traffic_aqi_df, "segment_id", "left")
         .join(tcs_df, "segment_id", "inner")
     )
-    
-    # Fill defaults for nulls
-    return dataset_df.na.fill({
-        "avg_ndvi": 0.3,
-        "avg_lst": 35.0,
-        "avg_shade": 0.2,
-        "congestion_ratio": 0.3,
-        "aqi_value": 50.0,
-        "tcs_value": 0.5
-    })
+
+    return dataset_df.na.fill(
+        {
+            "avg_ndvi": 0.15,
+            "avg_lst": 36.0,
+            "avg_shade": 0.20,
+            "congestion_ratio": 0.30,
+            "aqi_value": 50.0,
+            "tcs_value": 0.50,
+        }
+    )
 
 
-def train_and_simulate():
-    """Train ML model, perform simulations, and write to PostgreSQL."""
+def train_and_simulate(spark: SparkSession | None = None):
+    """Train MLlib DecisionTreeRegressor and simulate Green & Cool Pavement interventions."""
     print("=== Spark Job 6: AI/ML Predictive Simulations ===")
-    spark = create_spark_session()
-    
+    own_session = spark is None
+    if own_session:
+        spark = get_or_create_spark("CommuteCool_MLPredictor", enable_sedona=False)
+
     try:
-        dataset_df = load_dataset(spark)
-        
+        dataset_df = load_dataset(spark).cache()
         row_count = dataset_df.count()
         if row_count == 0:
-            print("  [Error] No training data available in Gold layer/PostGIS. Run ingestion & Spark pipeline first.")
+            print("  [Warning] No training data available yet.")
+            dataset_df.unpersist()
             return
-            
-        print(f"  Total records for ML modeling: {row_count} segments")
-        
-        # Define features and assemble vectors
+
+        print(f"  Training DecisionTreeRegressor on {row_count} Surabaya street segments...")
         feature_cols = ["avg_ndvi", "avg_lst", "avg_shade", "congestion_ratio", "aqi_value"]
         assembler = VectorAssembler(inputCols=feature_cols, outputCol="features")
         vector_df = assembler.transform(dataset_df)
-        
-        # Train Decision Tree model (explains target TCS)
-        print("  Training Decision Tree Regressor Model...")
+
         dt = DecisionTreeRegressor(featuresCol="features", labelCol="tcs_value", maxDepth=5)
         model = dt.fit(vector_df)
-        
-        # Show feature importances
-        importances = model.featureImportances
-        print("  Model Training Complete.")
-        for col_name, imp_val in zip(feature_cols, importances):
-            print(f"    Importance - {col_name}: {imp_val:.4f}")
-            
-        # --- Simulate Scenario 1: Green Scenario (Urban Afforestation) ---
-        # What if we increase NDVI tree density by +0.25 (capped at 0.75 max)?
-        print("  Simulating Scenario 1: Green City (NDVI +0.25)...")
-        green_sim_df = dataset_df.withColumn(
-            "avg_ndvi", 
-            when(col("avg_ndvi") + 0.25 > 0.72, 0.72).otherwise(col("avg_ndvi") + 0.25)
+
+        # Scenario 1: Urban Greening (+0.25 NDVI + +0.20 canopy shade)
+        green_sim_df = (
+            dataset_df.withColumn(
+                "avg_ndvi",
+                when(col("avg_ndvi") + 0.25 > 0.72, lit(0.72)).otherwise(col("avg_ndvi") + 0.25),
+            )
+            .withColumn(
+                "avg_shade",
+                when(col("avg_shade") + 0.20 > 0.95, lit(0.95)).otherwise(col("avg_shade") + 0.20),
+            )
         )
-        green_vector_df = assembler.transform(green_sim_df)
-        green_pred_df = model.transform(green_vector_df).withColumnRenamed("prediction", "predicted_tcs_green")
-        
-        # --- Simulate Scenario 2: Cool Pavement Scenario (Albedo change) ---
-        # What if we replace asphalt with cool pavement, reducing LST surface temp by -3.5C?
-        print("  Simulating Scenario 2: Cool Pavement (LST -3.5°C)...")
+        green_pred_df = (
+            model.transform(assembler.transform(green_sim_df))
+            .select(col("segment_id"), col("prediction").alias("predicted_tcs_green"))
+        )
+
+        # Scenario 2: Cool Pavement (-3.5C Surface LST)
         cool_sim_df = dataset_df.withColumn(
-            "avg_lst", 
-            when(col("avg_lst") - 3.5 < 28.0, 28.0).otherwise(col("avg_lst") - 3.5)
+            "avg_lst",
+            when(col("avg_lst") - 3.5 < 28.0, lit(28.0)).otherwise(col("avg_lst") - 3.5),
         )
-        cool_vector_df = assembler.transform(cool_sim_df)
-        cool_pred_df = model.transform(cool_vector_df).withColumnRenamed("prediction", "predicted_tcs_cool")
-        
-        # Combine simulations
+        cool_pred_df = (
+            model.transform(assembler.transform(cool_sim_df))
+            .select(col("segment_id"), col("prediction").alias("predicted_tcs_cool"))
+        )
+
         simulations_final_df = (
             dataset_df.select(col("segment_id"), col("tcs_value").alias("current_tcs"))
-            .join(green_pred_df.select("segment_id", "predicted_tcs_green"), "segment_id", "inner")
-            .join(cool_pred_df.select("segment_id", "predicted_tcs_cool"), "segment_id", "inner")
+            .join(green_pred_df, "segment_id", "inner")
+            .join(cool_pred_df, "segment_id", "inner")
             .withColumn("tcs_improvement_green", col("predicted_tcs_green") - col("current_tcs"))
             .withColumn("tcs_improvement_cool", col("predicted_tcs_cool") - col("current_tcs"))
             .withColumn("simulated_at", current_timestamp())
         )
-        
-        # Write to PostGIS
-        print("  Writing simulation predictions to PostgreSQL...")
+
         (
-            simulations_final_df.write
-            .mode("overwrite")
+            simulations_final_df.coalesce(4)
+            .write.mode("overwrite")
             .option("truncate", "true")
             .jdbc(JDBC_URL, "tcs_simulations", properties=JDBC_PROPS)
         )
-        
-        print(f"  ✓ Successfully simulated and saved {simulations_final_df.count()} records.")
-        print("=== AI/ML Simulations Complete ===")
-        
+        dataset_df.unpersist()
+        print(f"  ✓ Saved {row_count} ML simulation predictions to tcs_simulations")
     finally:
-        spark.stop()
+        if own_session and spark is not None:
+            spark.stop()
 
 
 if __name__ == "__main__":
