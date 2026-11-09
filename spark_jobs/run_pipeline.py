@@ -17,6 +17,7 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import sys
 import time
@@ -27,14 +28,14 @@ sys.path.insert(0, "/app")
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 WIB = timezone(timedelta(hours=7))
+DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://cc_user:cc_dev_pass@postgres:5432/commute_cool")
 
 
 def wait_for_db(max_retries: int = 30, delay: int = 2) -> bool:
     import psycopg2
-    db_url = os.getenv("DATABASE_URL", "postgresql://cc_user:cc_dev_pass@postgres:5432/commute_cool")
     for i in range(max_retries):
         try:
-            conn = psycopg2.connect(db_url)
+            conn = psycopg2.connect(DATABASE_URL)
             conn.close()
             print(f"[Pipeline] Database ready (attempt {i + 1})")
             return True
@@ -48,7 +49,6 @@ def wait_for_db(max_retries: int = 30, delay: int = 2) -> bool:
 def ensure_serving_schema() -> None:
     """Apply idempotent `optimize_serving.sql` functions & indexes if missing."""
     import psycopg2
-    db_url = os.getenv("DATABASE_URL", "postgresql://cc_user:cc_dev_pass@postgres:5432/commute_cool")
     sql_path = os.path.join(
         os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
         "database",
@@ -56,7 +56,7 @@ def ensure_serving_schema() -> None:
     )
     if not os.path.exists(sql_path):
         return
-    conn = psycopg2.connect(db_url)
+    conn = psycopg2.connect(DATABASE_URL)
     cur = conn.cursor()
     try:
         with open(sql_path, "r", encoding="utf-8") as f:
@@ -67,17 +67,37 @@ def ensure_serving_schema() -> None:
         conn.close()
 
 
-def step_1_ingest_apis(force_osm: bool = False) -> float:
-    """Fetch live weather, AQI, and traffic; fetch OSM only if DB is empty or `--force-osm`."""
+def store_latest_forecast() -> None:
+    """Persist the newest Open-Meteo hourly forecast for hour-aware routing."""
+    import psycopg2
+    from ingestion.weather_collector import get_latest_weather, store_hourly_forecast
+
+    conn = psycopg2.connect(DATABASE_URL)
+    cur = conn.cursor()
+    try:
+        stored = store_hourly_forecast(cur, get_latest_weather())
+        conn.commit()
+        print(f"[Pipeline] Hourly forecast rows stored: {stored}")
+    finally:
+        cur.close()
+        conn.close()
+
+
+def step_1_ingest_apis(force_osm: bool = False) -> float | None:
+    """Fetch live weather, AQI, traffic and BMKG alerts; fetch OSM only if needed.
+
+    Returns the measured air temperature, or None if the fetch failed, in which
+    case the Spark jobs read the last real reading themselves.
+    """
     print("\n" + "=" * 60)
     print("STEP 1: Ingestion - Fetch Real Environmental APIs")
     print("=" * 60)
 
-    air_temp = 32.0
+    air_temp = None
     try:
         from ingestion.weather_collector import fetch_current_weather
         weather = fetch_current_weather()
-        air_temp = float(weather.get("current", {}).get("temperature_2m", 32.0))
+        air_temp = float(weather["current"]["temperature_2m"])
         print(f"  ✓ Weather: {air_temp}°C")
     except Exception as e:
         print(f"  ✗ Weather fetch failed: {e}")
@@ -88,7 +108,7 @@ def step_1_ingest_apis(force_osm: bool = False) -> float:
         if aqi:
             print(f"  ✓ AQI: {aqi.get('aqi', 'N/A')}")
         else:
-            print("  ⚠ AQI: No API token, using baseline")
+            print("  ⚠ AQI: no reading (is WAQI_API_TOKEN set?); jobs will use the last real reading")
     except Exception as e:
         print(f"  ✗ AQI fetch failed: {e}")
 
@@ -98,6 +118,21 @@ def step_1_ingest_apis(force_osm: bool = False) -> float:
         print(f"  ✓ Traffic: {len(traffic)} measurement points")
     except Exception as e:
         print(f"  ✗ Traffic fetch failed: {e}")
+
+    try:
+        from ingestion.alerts_loader import load_alerts_to_db
+        from ingestion.bmkg_rss_monitor import fetch_bmkg_alerts
+        alerts = fetch_bmkg_alerts()
+        load_alerts_to_db()
+        print(f"  ✓ BMKG alerts: {len(alerts)} relevant to Surabaya")
+    except Exception as e:
+        print(f"  ✗ BMKG alerts failed: {e}")
+
+    try:
+        from ingestion.cctv_registry import run as load_cctv_registry
+        load_cctv_registry()
+    except Exception as e:
+        print(f"  ✗ CCTV registry failed: {e}")
 
     from ingestion.osm_loader import is_osm_already_populated
     if not force_osm and is_osm_already_populated():
@@ -114,8 +149,12 @@ def step_1_ingest_apis(force_osm: bool = False) -> float:
 
 
 def step_1_5_upload_to_hdfs_bronze(spark) -> None:
-    """Upload ingested raw JSON files to HDFS Bronze layer if HDFS is enabled."""
-    from spark_jobs.config import BRONZE_DIR, RAW_DATA_DIR, HDFS_ENABLED
+    """Replace each HDFS Bronze category with its newest raw document on one line.
+
+    The readers go line by line, so a pretty-printed document could never be parsed.
+    """
+    from spark_jobs.config import BRONZE_DIR, HDFS_ENABLED
+    from spark_jobs.live_inputs import latest_local_file
     if not HDFS_ENABLED:
         print("\n[Bronze] HDFS_NAMENODE unset -> using local Bronze cache.")
         return
@@ -132,10 +171,12 @@ def step_1_5_upload_to_hdfs_bronze(spark) -> None:
 
     try:
         for cat in ("weather", "aqi", "traffic"):
-            local_path = os.path.join(RAW_DATA_DIR, cat)
+            newest = latest_local_file(cat)
             hdfs_path = f"{BRONZE_DIR}/{cat}"
-            if os.path.exists(local_path) and os.listdir(local_path):
-                df = spark.read.text(f"file://{os.path.abspath(local_path)}/*.json")
+            if newest:
+                with open(newest, "r", encoding="utf-8") as f:
+                    compact_doc = json.dumps(json.load(f))
+                df = spark.createDataFrame([(compact_doc,)], "value string")
                 for attempt in range(12):
                     try:
                         df.write.mode("overwrite").text(hdfs_path)
@@ -171,8 +212,7 @@ def step_2_load_osm_idempotent(force_osm: bool = False) -> None:
 
     print("  Building pgRouting network topology...")
     import psycopg2
-    db_url = os.getenv("DATABASE_URL", "postgresql://cc_user:cc_dev_pass@postgres:5432/commute_cool")
-    conn = psycopg2.connect(db_url)
+    conn = psycopg2.connect(DATABASE_URL)
     cur = conn.cursor()
     try:
         cur.execute("SELECT build_routing_topology();")
@@ -217,12 +257,14 @@ def main():
         sys.exit(1)
 
     ensure_serving_schema()
-    air_temp = 31.0
+    air_temp = None
     if args.skip_ingest:
         print("[Pipeline] --skip-ingest: skipping ingestion, HDFS bronze upload and OSM load")
     else:
         air_temp = step_1_ingest_apis(force_osm=args.force_osm)
         step_2_load_osm_idempotent(force_osm=args.force_osm)
+
+    store_latest_forecast()
 
     from spark_jobs.session import get_or_create_spark, stop_shared_spark
     spark = get_or_create_spark("Teduh_UnifiedPipeline", enable_sedona=True)

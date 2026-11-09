@@ -13,8 +13,9 @@
 #   ./scripts/sync_to_supabase.sh
 #
 # Use the Supabase *session* pooler URL (port 5432) for this script, not the
-# transaction pooler (6543) that the API uses. Re-running is safe: target
-# tables are dropped and recreated from the local schema.
+# transaction pooler (6543) that the API uses. Re-running is safe: serving
+# tables are dropped and recreated from the local schema. User-generated tables
+# (USER_TABLES) are only created if missing and their rows are never touched.
 #
 # All Postgres client tools run inside the local DB container, so nothing
 # needs to be installed on the host besides Docker.
@@ -37,12 +38,18 @@ FULL_TABLES=(
   transit_stops
   cctv_cameras
   weather_alerts
+  weather_hourly_forecast
+  segment_live_comfort
+  segment_spatial_context
+)
+
+# Written by the live app in production. Never replaced by a local snapshot.
+# Order matters: each table's foreign keys point at earlier ones.
+USER_TABLES=(
   incident_reports
   map_alerts
   alert_validations
   user_feedback
-  segment_live_comfort
-  segment_spatial_context
 )
 
 if [[ -z "${SUPABASE_DB_URL:-}" ]]; then
@@ -68,6 +75,15 @@ if [[ -n "$MISSING" ]]; then
   echo "ERROR: missing local tables: $MISSING. Run the pipeline first (docker compose up spark-pipeline)." >&2
   exit 1
 fi
+
+echo "==> Checking no populated production table would be emptied"
+for t in "${FULL_TABLES[@]}"; do
+  if [[ "$(local_psql -tAc "SELECT count(*) FROM (SELECT 1 FROM $t LIMIT 1) x")" == "0" ]] \
+     && [[ "$(remote_psql -tAc "SELECT to_regclass('public.$t') IS NOT NULL AND (SELECT count(*) > 0 FROM $t)" 2>/dev/null || echo f)" == "t" ]]; then
+    echo "ERROR: local $t is empty but production has rows. Load it locally first." >&2
+    exit 1
+  fi
+done
 
 echo "==> Estimated snapshot size"
 local_psql -c "
@@ -106,7 +122,11 @@ BEGIN
 END $$;
 SQL
 
-echo "==> Copying tables (schema + data)"
+# --clean drops `segments`, which incident_reports references. The constraint is restored below.
+echo "==> Detaching user tables from serving tables"
+remote_psql -q -c "ALTER TABLE IF EXISTS incident_reports DROP CONSTRAINT IF EXISTS incident_reports_segment_id_fkey;"
+
+echo "==> Copying serving tables (schema + data)"
 DUMP_ARGS=(--no-owner --no-privileges --no-comments --clean --if-exists --exclude-table-data=thermal_comfort_scores)
 for t in "${FULL_TABLES[@]}"; do DUMP_ARGS+=(-t "public.$t"); done
 docker exec "$DB_CONTAINER" pg_dump -U "$LOCAL_USER" -d "$LOCAL_DB" "${DUMP_ARGS[@]}" | remote_psql -q -o /dev/null
@@ -114,6 +134,27 @@ docker exec "$DB_CONTAINER" pg_dump -U "$LOCAL_USER" -d "$LOCAL_DB" "${DUMP_ARGS
 echo "==> Copying latest thermal_comfort_scores per segment"
 local_psql -c "\copy (SELECT DISTINCT ON (segment_id) * FROM thermal_comfort_scores ORDER BY segment_id, computed_at DESC) TO STDOUT" \
   | remote_psql -c "\copy thermal_comfort_scores FROM STDIN"
+
+echo "==> Creating user tables if missing (rows are left alone)"
+for t in "${USER_TABLES[@]}"; do
+  if [[ "$(remote_psql -tAc "SELECT to_regclass('public.$t') IS NULL")" == "t" ]]; then
+    echo "    creating $t"
+    # Supabase installs uuid-ossp outside `public`; gen_random_uuid() is built in.
+    docker exec "$DB_CONTAINER" pg_dump -U "$LOCAL_USER" -d "$LOCAL_DB" \
+      --no-owner --no-privileges --no-comments --schema-only -t "public.$t" \
+      | sed 's/public\.uuid_generate_v4()/gen_random_uuid()/g' \
+      | remote_psql -q -o /dev/null
+  fi
+done
+
+# NOT VALID: segment IDs can change between snapshots, so existing reports are not rechecked.
+echo "==> Restoring incident_reports -> segments constraint"
+remote_psql -q <<'SQL'
+ALTER TABLE incident_reports DROP CONSTRAINT IF EXISTS incident_reports_segment_id_fkey;
+ALTER TABLE incident_reports
+  ADD CONSTRAINT incident_reports_segment_id_fkey
+  FOREIGN KEY (segment_id) REFERENCES segments(segment_id) ON DELETE SET NULL NOT VALID;
+SQL
 
 echo "==> ANALYZE + row counts"
 remote_psql -q -c "ANALYZE $(IFS=,; echo "${FULL_TABLES[*]}");"

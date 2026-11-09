@@ -48,6 +48,14 @@ OVERPASS_API_URLS = [
     if u.strip()
 ]
 
+class LiveDataUnavailable(RuntimeError):
+    """No real reading exists for a required input.
+
+    Raised instead of substituting a constant: a refresh that cannot get real
+    data must leave the previously served values alone.
+    """
+
+
 # --- Database ---
 DATABASE_URL = os.getenv(
     "DATABASE_URL",

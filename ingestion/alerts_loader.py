@@ -4,12 +4,26 @@ Reads alerts from Bronze layer (JSON files) and syncs them to the weather_alerts
 with PostGIS spatial geometries for the Surabaya bounding box.
 """
 
+from __future__ import annotations
+
 import json
 import os
 import psycopg2
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
+from email.utils import parsedate_to_datetime
 
 from ingestion.config import ALERTS_DIR, DATABASE_URL
+
+
+def parse_published_utc(published: str) -> datetime | None:
+    """Parse BMKG's RFC-822 pubDate to naive UTC, the convention of `weather_alerts`."""
+    try:
+        parsed = parsedate_to_datetime(published)
+    except (TypeError, ValueError):
+        return None
+    if parsed.tzinfo is None:
+        return None
+    return parsed.astimezone(timezone.utc).replace(tzinfo=None)
 
 
 def load_alerts_to_db():
@@ -34,10 +48,6 @@ def load_alerts_to_db():
     with open(latest_file, "r", encoding="utf-8") as f:
         alerts = json.load(f)
 
-    if not alerts:
-        print("  No active alerts found in the file.")
-        return
-
     conn = None
     try:
         conn = psycopg2.connect(DATABASE_URL)
@@ -52,14 +62,11 @@ def load_alerts_to_db():
             description = alert.get("description", "")
             severity = alert.get("severity", "minor")
 
-            # Parse published time or fallback to now
-            published_str = alert.get("published", "")
-            try:
-                # Common RSS date format parser placeholder or parse string
-                # e.g. "Sat, 20 Jun 2026 12:00:00 GMT"
-                issued_at = datetime.now()
-            except Exception:
-                issued_at = datetime.now()
+            # An alert with no real publication time cannot be aged out, so it is not loaded.
+            issued_at = parse_published_utc(alert.get("published", ""))
+            if issued_at is None:
+                print(f"  Skipping alert with unparsable date: {title!r}")
+                continue
 
             # Set expiration to 3 hours after issue for nowcasts
             expires_at = issued_at + timedelta(hours=3)

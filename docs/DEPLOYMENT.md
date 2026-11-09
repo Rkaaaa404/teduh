@@ -48,7 +48,7 @@ export SUPABASE_DB_URL='postgresql://postgres.<ref>:<password>@aws-0-ap-southeas
 ./scripts/sync_to_supabase.sh
 ```
 The script prints the size estimate, aborts if it's over 450 MB (`MAX_MB` to override), copies:
-`segments`, `segments_noded`, `segments_noded_vertices_pgr`, `segment_raster_scores`, `tcs_simulations`, `transit_stops`, `cctv_cameras`, `weather_alerts`, and the **latest** `thermal_comfort_scores` row per segment. It then prints row counts. Re-running it is safe.
+`segments`, `segments_noded`, `segments_noded_vertices_pgr`, `segment_raster_scores`, `tcs_simulations`, `transit_stops`, `cctv_cameras`, `weather_alerts`, `weather_hourly_forecast`, `segment_live_comfort`, `segment_spatial_context`, and the **latest** `thermal_comfort_scores` row per segment. It then prints row counts. Re-running it is safe: user-generated tables (`incident_reports`, `map_alerts`, `alert_validations`, `user_feedback`) are created if missing and their production rows are never replaced.
 
 ### 4. API → AWS Lambda
 ```bash
@@ -88,6 +88,7 @@ sam deploy --parameter-overrides \
 | Task | Command |
 |---|---|
 | Refresh data | `docker compose up spark-pipeline` (or `docker compose run --rm spark-pipeline -m spark_jobs.run_pipeline --skip-ingest`), then `./scripts/sync_to_supabase.sh` |
+| Upgrade to a release with schema changes | Run `./scripts/sync_to_supabase.sh` first, then redeploy the API (the new API queries the new columns) |
 | Redeploy API after code changes | `sam build && sam deploy --parameter-overrides ...` (same values as before) |
 | Redeploy frontend | `git push` (Vercel auto-deploys) |
 | API logs | `sam logs --stack-name teduh-api --tail` |
@@ -104,6 +105,9 @@ sam deploy --parameter-overrides \
 | `DB_STATEMENT_CACHE_SIZE` | `100` | `0` | Must be `0` behind the Supabase transaction pooler |
 
 ## Known limitations / troubleshooting
+- **Production data is a snapshot.** Supabase holds whatever the last sync copied; nothing refreshes it automatically. The dashboard and route panel show the snapshot time ("Data per ...").
+- **Moderation endpoints are open.** Approving or rejecting reports and deleting map alerts (`/api/v1/report/*`, `DELETE /api/v1/alerts/*`) have no authentication, and the officer ID is generated in the browser. This is accepted for the demo; anyone with the API URL can use them. Add real auth before public launch.
+- **`POST /api/admin/fast-refresh` returns 501 on Lambda**: the bundle contains only `api/`. Refresh locally and re-sync.
 - **First request is slow** (~1–2 s Lambda cold start and the DB connection). Later requests are fast.
 - **Supabase paused** after 7 days without activity: resume it from the dashboard. Data is kept.
 - **CCTV**: Dishub streams are HTTP-only, so they're proxied through Vercel (`/cctv-hls/*` in `frontend/next.config.ts`). If Dishub blocks Vercel's IPs, the video won't load; the rest of the app is unaffected.

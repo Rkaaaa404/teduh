@@ -21,8 +21,8 @@ export type MapLayerMode = 'tcs' | 'uhi' | 'realistic';
 
 export interface SegmentDetail {
   segment_id: number;
-  tcs_value: number;
-  shade_ratio: number;
+  tcs_value: number | null;
+  shade_ratio: number | null;
   apparent_temp: number | null;
   surface: string | null;
   length_m: number;
@@ -48,6 +48,9 @@ export interface RouteResponse {
   routes: RouteResult[];
   weather_alert: string | null;
   heat_budget: HeatBudgetInfo;
+  conditions_hour: number | null;
+  time_basis: 'forecast' | 'current' | string;
+  data_as_of: string | null;
 }
 
 export interface ThermalSegment {
@@ -113,6 +116,8 @@ export interface UHISummary {
   total_segments: number;
   critical_segments: number;
   avg_city_tcs: number;
+  data_as_of: string | null;
+  conditions_hour?: number | null;
 }
 
 export interface UHIResponse {
@@ -124,7 +129,7 @@ export interface PriorityCorridor {
   corridor_name: string;
   segments: number[];
   avg_tcs: number;
-  pedestrian_volume: 'high' | 'medium' | 'low' | string;
+  transit_access: 'high' | 'medium' | 'low' | string;
   nearest_transit: string | null;
   recommendation: string;
   priority_score: number;
@@ -136,9 +141,10 @@ export interface PriorityCorridorsResponse {
 
 export interface WalkabilityStats {
   total_transit_stops: number;
-  reachable_within_10min: number;
-  reachable_percentage: number;
+  comfortable_stops: number;
+  comfortable_percentage: number;
   avg_tcs_city: number;
+  conditions_hour?: number | null;
   worst_kecamatan?: string | null;
   best_kecamatan?: string | null;
 }
@@ -160,14 +166,15 @@ export interface SimulationItem {
   predicted_tcs_cool: number;
   tcs_improvement_green: number;
   tcs_improvement_cool: number;
+  source: 'mllib' | 'formula' | string | null;
 }
 
 export interface HourlyHeatPoint {
   hour: number;
   label: string;
   tcs_current: number;
-  tcs_green_scenario: number;
-  tcs_cool_scenario: number;
+  tcs_green_scenario: number | null;
+  tcs_cool_scenario: number | null;
   apparent_temp: number;
 }
 
@@ -194,7 +201,8 @@ export interface HeatPredictionSummary {
   avg_city_tcs: number;
   avg_apparent_temp: number;
   max_apparent_temp: number;
-  peak_heat_hour: number;
+  peak_heat_hour: number | null;
+  simulation_source: 'mllib' | 'formula' | string | null;
 }
 
 export interface HeatPredictionResponse {
@@ -267,7 +275,7 @@ export interface AlertValidationStats {
   still_active_count: number;
   no_longer_active_count: number;
   total_validations: number;
-  still_active_pct: number; // 0.0 - 1.0 ratio from backend
+  still_active_pct: number | null; // 0.0 - 1.0 ratio; null until the first vote
 }
 
 export interface AlertValidationResult {

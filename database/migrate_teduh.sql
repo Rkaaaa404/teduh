@@ -1,5 +1,5 @@
 -- ============================================================
--- COMMUTE-COOL TEDUH Feature Set Schema Migration
+-- TEDUH Feature Set Schema Migration
 -- PostgreSQL + PostGIS + pgRouting
 -- ============================================================
 

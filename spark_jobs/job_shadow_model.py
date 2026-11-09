@@ -15,9 +15,10 @@ from datetime import datetime, date
 import psycopg2
 
 from pyspark.sql import SparkSession, DataFrame
-from pyspark.sql.functions import broadcast, col, lit, least, greatest, coalesce
+from pyspark.sql.functions import broadcast, col, expr, lit
 from pyspark.sql.types import StructType, StructField, IntegerType, DoubleType
 
+from spark_jobs.utils.normalization import shade_ratio_sql
 from spark_jobs.utils.solar_position import get_surabaya_solar_position
 from spark_jobs.config import (
     JDBC_URL,
@@ -97,19 +98,10 @@ def run(target_date: date | None = None, spark: SparkSession | None = None):
         solar_df = _build_hourly_solar_df(spark, target_date)
 
         # Pure JVM vectorized shadow projection across all 12 hours simultaneously
-        shadow_len_col = col("avg_building_height") / col("tan_elev")
-        building_shade_col = least(
-            lit(1.0),
-            (col("nearby_buildings").cast("double") * shadow_len_col * lit(3.0))
-            / (col("length_m") + lit(1.0)),
-        )
-        tree_shade_col = least(
-            lit(0.5),
-            (col("nearby_trees").cast("double") * lit(8.0)) / (col("length_m") + lit(1.0)),
-        )
-        total_shade_col = least(
-            lit(1.0),
-            greatest(lit(0.0), coalesce(building_shade_col + tree_shade_col, lit(0.15))),
+        total_shade_col = expr(
+            shade_ratio_sql(
+                "nearby_buildings", "avg_building_height", "nearby_trees", "length_m", "tan_elev"
+            )
         )
 
         all_hours_df = (

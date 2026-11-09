@@ -125,7 +125,7 @@ Jika rute ternyaman tetap melebihi batas paparan, API mengembalikan `"within_hea
 
 ### Simulasi kebijakan (Machine Learning)
 
-`DecisionTreeRegressor` (Spark MLlib) dilatih untuk memprediksi TCS dari kerapatan vegetasi, suhu permukaan, keteduhan, kemacetan, dan AQI. Model lalu dipakai untuk dua skenario "what-if" di seluruh ruas jalan:
+`LinearRegression` (Spark MLlib) dilatih untuk memprediksi TCS dari kerapatan vegetasi, suhu permukaan, keteduhan, kemacetan, AQI, dan kualitas permukaan jalan. Model lalu dipakai untuk dua skenario "what-if" di seluruh ruas jalan:
 
 - 🌿 **Penghijauan:** kerapatan vegetasi +0,25 (maksimal 0,72).
 - ❄️ **Cool pavement:** suhu permukaan −3,5 °C.
@@ -239,21 +239,24 @@ Panduan lengkapnya ada di **[docs/DEPLOYMENT.md](docs/DEPLOYMENT.md)**.
 
 ```
 teduh/
+|-- AGENTS.md                 Peta kode & aturan data (mulai dari sini)
 |-- api/                      FastAPI backend (juga dikemas untuk AWS Lambda)
-|   |-- routes/               navigation (pgRouting), dashboard, cctv
+|   |-- routes/               navigation (pgRouting), dashboard, cctv, reports, alerts
+|   |-- conditions.py         Kondisi termal per jam
 |   |-- models/schemas.py     Pydantic models
 |   |-- db.py                 asyncpg connection pool
 |   +-- lambda_handler.py     Entry point Lambda (Mangum)
-|-- ingestion/                Pengambilan data API, OSM, CCTV, klien HDFS, scheduler
+|-- ingestion/                Pengambilan data API, OSM, CCTV, fast refresh, scheduler
 |-- spark_jobs/               Pipeline Spark + Sedona (raster, bayangan, TCS, lalu lintas, bobot graf, ML)
 |   +-- run_pipeline.py       Orkestrator pipeline lengkap
 |-- frontend/                 Next.js: dashboard (/) dan navigasi (/navigasi)
 |-- database/                 Skema, fungsi topologi pgRouting, seed halte
+|-- docker/                   Dockerfile dan konfigurasi Hadoop
 |-- validation/               Validasi model bayangan & termal
 |-- tests/                    Unit & e2e tests
 |-- notebooks/                Notebook eksplorasi pipeline & ML
 |-- scripts/sync_to_supabase.sh   Snapshot database lokal ke Supabase
-|-- docs/DEPLOYMENT.md        Panduan deployment
+|-- docs/                     DEPLOYMENT, DEMO_GUIDE, specs/
 |-- docker-compose.yml        postgres, hadoop (namenode/datanode), spark-pipeline, api
 +-- template.yaml, samconfig.toml   Konfigurasi AWS SAM
 ```

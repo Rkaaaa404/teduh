@@ -9,7 +9,6 @@ Schedule (from design.md Section 8.2):
 - Traffic Collector: Every 15 minutes
 - AQI Collector: Every 30 minutes
 - BMKG RSS Monitor: Every 5 minutes
-- NDVI/LST Estimation: Daily at 04:00
 - CCTV Registry: Daily at 03:30
 """
 
@@ -85,16 +84,6 @@ def run_bmkg_monitor():
         print(f"[Scheduler] BMKG Monitor failed: {e}")
 
 
-def run_ndvi_lst_estimation():
-    """Run NDVI/LST proxy estimation."""
-    print(f"[Scheduler] {datetime.now()} - Running NDVI/LST Estimation")
-    try:
-        from ingestion.ndvi_lst_estimator import estimate_all
-        estimate_all()
-    except Exception as e:
-        print(f"[Scheduler] NDVI/LST Estimation failed: {e}")
-
-
 def run_cctv_registry():
     """Update CCTV camera registry."""
     print(f"[Scheduler] {datetime.now()} - Running CCTV Registry Update")
@@ -148,7 +137,6 @@ def create_scheduler() -> BlockingScheduler:
     scheduler.add_job(run_osm_fetch, CronTrigger(hour=3, minute=0), id="osm_fetch")
     scheduler.add_job(run_osm_load, CronTrigger(hour=3, minute=30), id="osm_load")
     scheduler.add_job(run_cctv_registry, CronTrigger(hour=3, minute=45), id="cctv")
-    scheduler.add_job(run_ndvi_lst_estimation, CronTrigger(hour=4, minute=0), id="ndvi_lst")
 
     # --- Spark processing (after daily data refresh) ---
     scheduler.add_job(run_spark_jobs, CronTrigger(hour=4, minute=30), id="spark")
@@ -171,7 +159,6 @@ def main():
     print("    OSM Fetch:  daily 03:00")
     print("    OSM Load:   daily 03:30")
     print("    CCTV:       daily 03:45")
-    print("    NDVI/LST:   daily 04:00")
     print("    Spark Jobs: daily 04:30")
     print()
     print("  Press Ctrl+C to stop.")

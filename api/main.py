@@ -29,10 +29,15 @@ async def _ensure_serving_layer_ready() -> None:
                     with open(migrate_path, "r", encoding="utf-8") as f:
                         await conn.execute(f.read())
 
-            has_table = await conn.fetchval(
-                "SELECT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'segment_live_comfort')"
+            has_current_schema = await conn.fetchval(
+                """
+                SELECT EXISTS (
+                    SELECT 1 FROM information_schema.columns
+                    WHERE table_name = 'segment_live_comfort' AND column_name = 'shade_by_hour'
+                )
+                """
             )
-            if not has_table:
+            if not has_current_schema:
                 sql_path = os.path.join(base_dir, "database", "optimize_serving.sql")
                 if os.path.exists(sql_path):
                     with open(sql_path, "r", encoding="utf-8") as f:

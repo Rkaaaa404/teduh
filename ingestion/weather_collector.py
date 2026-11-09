@@ -99,5 +99,62 @@ def get_latest_weather() -> dict | None:
         return json.load(f)
 
 
+def parse_hourly_forecast(weather_doc: dict | None) -> list[tuple]:
+    """Turn Open-Meteo's `hourly` block into `weather_hourly_forecast` rows.
+
+    Returns (forecast_date, hour_of_day, temperature_2m, apparent_temp,
+    direct_radiation, cloud_cover). Hours without an apparent temperature are
+    dropped rather than filled in.
+    """
+    hourly = (weather_doc or {}).get("hourly") or {}
+    times = hourly.get("time") or []
+
+    def column(name: str) -> list:
+        return hourly.get(name) or [None] * len(times)
+
+    rows = []
+    for stamp, temp, apparent, radiation, cloud in zip(
+        times,
+        column("temperature_2m"),
+        column("apparent_temperature"),
+        column("direct_radiation"),
+        column("cloud_cover"),
+    ):
+        if apparent is None:
+            continue
+        moment = datetime.fromisoformat(stamp)
+        rows.append((moment.date(), moment.hour, temp, apparent, radiation, cloud))
+    return rows
+
+
+def store_hourly_forecast(cur, weather_doc: dict | None) -> int:
+    """Upsert the forecast using an open cursor and keep three days of history."""
+    rows = parse_hourly_forecast(weather_doc)
+    if not rows:
+        return 0
+
+    cur.executemany(
+        """
+        INSERT INTO weather_hourly_forecast (
+            forecast_date, hour_of_day, temperature_2m, apparent_temp,
+            direct_radiation, cloud_cover, fetched_at
+        ) VALUES (%s, %s, %s, %s, %s, %s, NOW())
+        ON CONFLICT (forecast_date, hour_of_day) DO UPDATE SET
+            temperature_2m   = EXCLUDED.temperature_2m,
+            apparent_temp    = EXCLUDED.apparent_temp,
+            direct_radiation = EXCLUDED.direct_radiation,
+            cloud_cover      = EXCLUDED.cloud_cover,
+            fetched_at       = NOW();
+        """,
+        rows,
+    )
+    newest = max(row[0] for row in rows)
+    cur.execute(
+        "DELETE FROM weather_hourly_forecast WHERE forecast_date < %s::date - 3;",
+        (newest,),
+    )
+    return len(rows)
+
+
 if __name__ == "__main__":
     fetch_current_weather()

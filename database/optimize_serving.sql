@@ -30,15 +30,43 @@ CREATE TABLE IF NOT EXISTS segment_spatial_context (
 -- Eliminates repeated `SELECT DISTINCT ON (segment_id)` & `JOIN LATERAL` scans!
 CREATE TABLE IF NOT EXISTS segment_live_comfort (
     segment_id      INTEGER PRIMARY KEY REFERENCES segments(segment_id) ON DELETE CASCADE,
-    tcs_value       DOUBLE PRECISION NOT NULL DEFAULT 0.5,
-    apparent_temp   DOUBLE PRECISION NOT NULL DEFAULT 33.0,
-    shade_ratio     DOUBLE PRECISION NOT NULL DEFAULT 0.2,
-    avg_ndvi        DOUBLE PRECISION NOT NULL DEFAULT 0.15,
-    avg_lst         DOUBLE PRECISION NOT NULL DEFAULT 36.0,
-    aqi_value       DOUBLE PRECISION NOT NULL DEFAULT 50.0,
-    traffic_level   DOUBLE PRECISION NOT NULL DEFAULT 0.3,
+    tcs_value       DOUBLE PRECISION NOT NULL,
+    apparent_temp   DOUBLE PRECISION NOT NULL,
+    shade_ratio     DOUBLE PRECISION NOT NULL,
+    shade_by_hour   REAL[],             -- 12 slots, 06:00-17:00 WIB (index 1 = 06:00)
+    avg_ndvi        DOUBLE PRECISION NOT NULL,
+    avg_lst         DOUBLE PRECISION NOT NULL,
+    aqi_value       DOUBLE PRECISION NOT NULL,
+    traffic_level   DOUBLE PRECISION NOT NULL,
     updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+-- Upgrades for databases created before hour-aware routing.
+-- Dropping the defaults means a row can never be created with invented values.
+ALTER TABLE segment_live_comfort
+    ADD COLUMN IF NOT EXISTS shade_by_hour REAL[],
+    ALTER COLUMN tcs_value DROP DEFAULT,
+    ALTER COLUMN apparent_temp DROP DEFAULT,
+    ALTER COLUMN shade_ratio DROP DEFAULT,
+    ALTER COLUMN avg_ndvi DROP DEFAULT,
+    ALTER COLUMN avg_lst DROP DEFAULT,
+    ALTER COLUMN aqi_value DROP DEFAULT,
+    ALTER COLUMN traffic_level DROP DEFAULT;
+
+-- Open-Meteo hourly forecast: drives hour-aware routing and the heat prediction chart
+CREATE TABLE IF NOT EXISTS weather_hourly_forecast (
+    forecast_date    DATE NOT NULL,
+    hour_of_day      SMALLINT NOT NULL CHECK (hour_of_day BETWEEN 0 AND 23),
+    temperature_2m   DOUBLE PRECISION,
+    apparent_temp    DOUBLE PRECISION NOT NULL,
+    direct_radiation DOUBLE PRECISION,
+    cloud_cover      DOUBLE PRECISION,
+    fetched_at       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (forecast_date, hour_of_day)
+);
+
+-- Which model produced each row: 'mllib' (Spark Job 6) or 'formula' (fast_refresh)
+ALTER TABLE tcs_simulations ADD COLUMN IF NOT EXISTS source TEXT;
 
 CREATE INDEX IF NOT EXISTS idx_live_comfort_tcs
     ON segment_live_comfort (tcs_value);
@@ -169,6 +197,8 @@ END;
 $$ LANGUAGE plpgsql;
 
 -- 5. Stored Function: Atomic Sync from Latest Computed Scores into segment_live_comfort
+-- Inner joins: only segments with real scores are served. shade_by_hour keeps the
+-- newest value per hour and stays positional even if some hours are missing.
 CREATE OR REPLACE FUNCTION sync_segment_live_comfort()
 RETURNS INTEGER AS $$
 DECLARE
@@ -179,6 +209,7 @@ BEGIN
         tcs_value,
         apparent_temp,
         shade_ratio,
+        shade_by_hour,
         avg_ndvi,
         avg_lst,
         aqi_value,
@@ -187,31 +218,58 @@ BEGIN
     )
     SELECT
         s.segment_id,
-        COALESCE(tcs.tcs_value, 0.5),
-        COALESCE(tcs.apparent_temp, 33.0),
-        COALESCE(tcs.shade_ratio, 0.2),
-        COALESCE(rs.avg_ndvi, 0.15),
-        COALESCE(rs.avg_lst, 36.0),
-        COALESCE(tcs.aqi_value, 50.0),
-        COALESCE(tcs.traffic_level, 0.3),
+        tcs.tcs_value,
+        tcs.apparent_temp,
+        tcs.shade_ratio,
+        hourly.shade_by_hour,
+        rs.avg_ndvi,
+        rs.avg_lst,
+        tcs.aqi_value,
+        tcs.traffic_level,
         NOW()
     FROM segments s
-    LEFT JOIN (
+    JOIN (
         SELECT DISTINCT ON (segment_id)
             segment_id, tcs_value, apparent_temp, shade_ratio, aqi_value, traffic_level
         FROM thermal_comfort_scores
         ORDER BY segment_id, computed_at DESC
     ) tcs ON tcs.segment_id = s.segment_id
-    LEFT JOIN (
+    JOIN (
         SELECT DISTINCT ON (segment_id)
             segment_id, avg_ndvi, avg_lst
         FROM segment_raster_scores
         ORDER BY segment_id, computed_at DESC
     ) rs ON rs.segment_id = s.segment_id
+    LEFT JOIN (
+        SELECT
+            latest.segment_id,
+            ARRAY[
+                MAX(latest.shade_ratio) FILTER (WHERE latest.hour_of_day = 6),
+                MAX(latest.shade_ratio) FILTER (WHERE latest.hour_of_day = 7),
+                MAX(latest.shade_ratio) FILTER (WHERE latest.hour_of_day = 8),
+                MAX(latest.shade_ratio) FILTER (WHERE latest.hour_of_day = 9),
+                MAX(latest.shade_ratio) FILTER (WHERE latest.hour_of_day = 10),
+                MAX(latest.shade_ratio) FILTER (WHERE latest.hour_of_day = 11),
+                MAX(latest.shade_ratio) FILTER (WHERE latest.hour_of_day = 12),
+                MAX(latest.shade_ratio) FILTER (WHERE latest.hour_of_day = 13),
+                MAX(latest.shade_ratio) FILTER (WHERE latest.hour_of_day = 14),
+                MAX(latest.shade_ratio) FILTER (WHERE latest.hour_of_day = 15),
+                MAX(latest.shade_ratio) FILTER (WHERE latest.hour_of_day = 16),
+                MAX(latest.shade_ratio) FILTER (WHERE latest.hour_of_day = 17)
+            ]::real[] AS shade_by_hour
+        FROM (
+            SELECT DISTINCT ON (segment_id, hour_of_day)
+                segment_id, hour_of_day, shade_ratio
+            FROM segment_shadows
+            ORDER BY segment_id, hour_of_day, computed_at DESC
+        ) latest
+        GROUP BY latest.segment_id
+    ) hourly ON hourly.segment_id = s.segment_id
     ON CONFLICT (segment_id) DO UPDATE SET
         tcs_value     = EXCLUDED.tcs_value,
         apparent_temp = EXCLUDED.apparent_temp,
         shade_ratio   = EXCLUDED.shade_ratio,
+        shade_by_hour = EXCLUDED.shade_by_hour,
         avg_ndvi      = EXCLUDED.avg_ndvi,
         avg_lst       = EXCLUDED.avg_lst,
         aqi_value     = EXCLUDED.aqi_value,

@@ -30,8 +30,8 @@ class RouteRequest(BaseModel):
 
 class SegmentDetail(BaseModel):
     segment_id: int
-    tcs_value: float
-    shade_ratio: float
+    tcs_value: Optional[float] = None  # None when the segment has no real score
+    shade_ratio: Optional[float] = None
     apparent_temp: Optional[float] = None
     surface: Optional[str] = None
     length_m: float
@@ -57,6 +57,9 @@ class RouteResponse(BaseModel):
     routes: list[RouteResult]
     weather_alert: Optional[str] = None
     heat_budget: HeatBudgetInfo
+    conditions_hour: Optional[int] = None  # WIB hour the scores describe; None for current data
+    time_basis: str = "current"  # "forecast" or "current"
+    data_as_of: Optional[datetime] = None
 
 
 # --- Dashboard Responses ---
@@ -74,6 +77,8 @@ class UHISummary(BaseModel):
     total_segments: int
     critical_segments: int
     avg_city_tcs: float
+    data_as_of: Optional[datetime] = None
+    conditions_hour: Optional[int] = None  # hottest forecast hour (WIB) the scores describe
 
 
 class UHIResponse(BaseModel):
@@ -85,7 +90,7 @@ class PriorityCorridor(BaseModel):
     corridor_name: str
     segments: list[int]
     avg_tcs: float
-    pedestrian_volume: str
+    transit_access: str  # high/medium/low, from transit stops near the corridor
     nearest_transit: Optional[str] = None
     recommendation: str
     priority_score: float
@@ -97,9 +102,10 @@ class PriorityCorridorsResponse(BaseModel):
 
 class WalkabilityStats(BaseModel):
     total_transit_stops: int
-    reachable_within_10min: int
-    reachable_percentage: float
+    comfortable_stops: int  # stops whose surroundings (~780 m) average TCS > 0.55
+    comfortable_percentage: float
     avg_tcs_city: float
+    conditions_hour: Optional[int] = None  # hottest forecast hour (WIB) the scores describe
     worst_kecamatan: Optional[str] = None
     best_kecamatan: Optional[str] = None
 

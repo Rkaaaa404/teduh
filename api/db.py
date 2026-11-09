@@ -24,6 +24,17 @@ DB_POOL_MAX = int(os.getenv("DB_POOL_MAX", "8"))
 DB_STATEMENT_CACHE_SIZE = int(os.getenv("DB_STATEMENT_CACHE_SIZE", "100"))
 _pool: asyncpg.Pool | None = None
 
+# `severity` is free text, so sorting it directly would put "extreme" below "minor".
+ALERT_SEVERITIES_MOST_FIRST = ("extreme", "severe", "moderate", "minor")
+ALERT_SEVERITY_RANK_SQL = (
+    "CASE LOWER(severity) "
+    + " ".join(
+        f"WHEN '{name}' THEN {position}"
+        for position, name in enumerate(ALERT_SEVERITIES_MOST_FIRST)
+    )
+    + f" ELSE {len(ALERT_SEVERITIES_MOST_FIRST)} END"
+)
+
 # Lightweight in-memory TTL cache for city-wide analytics endpoints
 _ttl_store: dict[str, tuple[float, Any]] = {}
 

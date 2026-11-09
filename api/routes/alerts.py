@@ -168,7 +168,7 @@ async def get_alert_validation_stats(alert_id: str):
         no_count = stats["no_count"] or 0
         total_count = stats["total_count"] or 0
         
-        still_active_pct = (yes_count / total_count) if total_count > 0 else 1.0
+        still_active_pct = (yes_count / total_count) if total_count > 0 else None
 
         return {
             "alert_id": alert_id,

@@ -28,9 +28,8 @@ export const NavigationOverlay: React.FC<NavigationOverlayProps> = ({
   // Walking speed 4.5 km/h = 75 m/min (konsisten dengan api/routes/navigation.py baris 226)
   const remainingMinutes = Math.max(1, Math.round(remainingMeters / 75));
   const currentSegment = activeRoute.segments[0] ?? null;
-  const grade = getTcsGrade(
-    currentSegment ? currentSegment.tcs_value : activeRoute.avg_tcs
-  );
+  const displayTcs = currentSegment?.tcs_value ?? activeRoute.avg_tcs;
+  const grade = getTcsGrade(displayTcs);
 
   return (
     <>
@@ -47,7 +46,7 @@ export const NavigationOverlay: React.FC<NavigationOverlayProps> = ({
               </p>
               <p className="mt-0.5 truncate text-[11px] text-slate-300">
                 {currentSegment
-                  ? `Koridor Segmen #${currentSegment.segment_id} • Teduh ${Math.round(currentSegment.shade_ratio * 100)}%`
+                  ? `Koridor Segmen #${currentSegment.segment_id}${currentSegment.shade_ratio === null ? '' : ` • Teduh ${Math.round(currentSegment.shade_ratio * 100)}%`}`
                   : `Rute ${activeRoute.type === 'most_comfortable' ? 'Ternyaman' : 'Tercepat'} aktif`}
               </p>
             </div>
@@ -59,7 +58,7 @@ export const NavigationOverlay: React.FC<NavigationOverlayProps> = ({
               style={{ backgroundColor: grade.color }}
             >
               TCS{' '}
-              {(currentSegment?.tcs_value ?? activeRoute.avg_tcs).toFixed(2)}
+              {displayTcs.toFixed(2)}
             </span>
           </div>
         </div>

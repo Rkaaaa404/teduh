@@ -2,8 +2,16 @@
 from __future__ import annotations
 
 import json
-from fastapi import APIRouter
+from fastapi import APIRouter, HTTPException
 
+from api.conditions import (
+    HourConditions,
+    apparent_at_hour_sql,
+    build_hourly_trend,
+    shade_at_hour_sql,
+    tcs_at_hour_sql,
+    wib_hour,
+)
 from api.models.schemas import (
     UHIResponse,
     UHISummary,
@@ -12,9 +20,36 @@ from api.models.schemas import (
     PriorityCorridor,
     WalkabilityStats,
 )
-from api.db import get_conn, ttl_cache_get, ttl_cache_set
+from api.db import ALERT_SEVERITY_RANK_SQL, get_conn, ttl_cache_get, ttl_cache_set
 
 router = APIRouter()
+
+
+async def _peak_conditions(conn) -> HourConditions:
+    """The hottest daylight hour of the latest forecast.
+
+    Planning outputs are judged at this hour. Otherwise they would depend on when
+    the data was refreshed, and be empty after a night-time refresh.
+    """
+    row = await conn.fetchrow(
+        """
+        SELECT hour_of_day, apparent_temp
+        FROM weather_hourly_forecast
+        WHERE hour_of_day BETWEEN 6 AND 17
+          AND forecast_date = (SELECT MAX(forecast_date) FROM weather_hourly_forecast)
+        ORDER BY apparent_temp DESC, hour_of_day
+        LIMIT 1
+        """
+    )
+    if row is None:
+        return HourConditions(hour=wib_hour(None), basis="current")
+    return HourConditions(
+        hour=row["hour_of_day"], basis="forecast", apparent_temp=float(row["apparent_temp"])
+    )
+
+
+def _reported_hour(conditions: HourConditions) -> int | None:
+    return conditions.hour if conditions.basis == "forecast" else None
 
 
 @router.get("/uhi", response_model=UHIResponse)
@@ -25,29 +60,32 @@ async def get_uhi_hotspots():
         return cached
 
     async with get_conn() as conn:
+        conditions = await _peak_conditions(conn)
+        tcs = tcs_at_hour_sql(conditions)
         summary_row = await conn.fetchrow(
-            """
+            f"""
             SELECT
                 COUNT(*) AS total_segments,
-                COUNT(*) FILTER (WHERE tcs_value < 0.4) AS critical_segments,
-                COALESCE(AVG(tcs_value), 0) AS avg_city_tcs
-            FROM segment_live_comfort
+                COUNT(*) FILTER (WHERE ({tcs}) < 0.4) AS critical_segments,
+                COALESCE(AVG({tcs}), 0) AS avg_city_tcs,
+                MAX(lc.updated_at) AS data_as_of
+            FROM segment_live_comfort lc
             """
         )
 
         hotspot_rows = await conn.fetch(
-            """
+            f"""
             SELECT
                 s.segment_id,
                 s.name,
                 ST_AsGeoJSON(s.geom, 5) AS geometry,
-                COALESCE(lc.avg_lst, 36.0) AS avg_lst,
-                lc.tcs_value AS avg_tcs,
-                lc.shade_ratio
+                lc.avg_lst,
+                ({tcs}) AS avg_tcs,
+                ({shade_at_hour_sql(conditions)}) AS shade_ratio
             FROM segment_live_comfort lc
             JOIN segments s ON s.segment_id = lc.segment_id
-            WHERE lc.tcs_value < 0.55
-            ORDER BY lc.tcs_value ASC
+            WHERE ({tcs}) < 0.55
+            ORDER BY avg_tcs ASC
             LIMIT 100
             """
         )
@@ -70,6 +108,8 @@ async def get_uhi_hotspots():
             total_segments=summary_row["total_segments"] or 0,
             critical_segments=summary_row["critical_segments"] or 0,
             avg_city_tcs=round(float(summary_row["avg_city_tcs"] or 0), 3),
+            data_as_of=summary_row["data_as_of"],
+            conditions_hour=_reported_hour(conditions),
         ),
     )
     ttl_cache_set("dashboard:uhi", resp, ttl_sec=60.0)
@@ -84,21 +124,23 @@ async def get_priority_corridors():
         return cached
 
     async with get_conn() as conn:
+        conditions = await _peak_conditions(conn)
+        tcs = tcs_at_hour_sql(conditions)
         rows = await conn.fetch(
-            """
+            f"""
             WITH corridors AS (
                 SELECT
                     COALESCE(s.name, 'Unnamed ' || COALESCE(s.highway_type, 'path') || ' corridor') AS corridor_name,
                     ARRAY_AGG(s.segment_id) AS segment_ids,
-                    AVG(lc.tcs_value) AS avg_tcs,
-                    AVG(lc.shade_ratio) AS avg_shade,
-                    AVG(lc.apparent_temp) AS avg_temp,
+                    AVG({tcs}) AS avg_tcs,
+                    AVG({shade_at_hour_sql(conditions)}) AS avg_shade,
+                    AVG({apparent_at_hour_sql(conditions)}) AS avg_temp,
                     AVG(lc.aqi_value) AS avg_aqi,
                     AVG(lc.traffic_level) AS avg_traffic,
                     ST_Centroid(ST_Collect(s.geom)) AS corridor_center
                 FROM segment_live_comfort lc
                 JOIN segments s ON s.segment_id = lc.segment_id
-                WHERE lc.tcs_value < 0.58
+                WHERE ({tcs}) < 0.58
                 GROUP BY COALESCE(s.name, 'Unnamed ' || COALESCE(s.highway_type, 'path') || ' corridor')
             )
             SELECT
@@ -127,7 +169,7 @@ async def get_priority_corridors():
     corridors = []
     for row in rows:
         transit_count = row["max_transit"] or 0
-        volume = "high" if transit_count >= 2 else ("medium" if transit_count >= 1 else "low")
+        access = "high" if transit_count >= 2 else ("medium" if transit_count >= 1 else "low")
         avg_tcs = float(row["avg_tcs"])
         avg_shade = float(row["avg_shade"])
         avg_temp = float(row["avg_temp"])
@@ -153,7 +195,7 @@ async def get_priority_corridors():
                 corridor_name=row["corridor_name"],
                 segments=row["segment_ids"][:10],
                 avg_tcs=round(avg_tcs, 3),
-                pedestrian_volume=volume,
+                transit_access=access,
                 nearest_transit=row["nearest_transit_name"],
                 recommendation=" & ".join(recs),
                 priority_score=round(float(row["priority_score"]), 3),
@@ -173,12 +215,14 @@ async def get_walkability_stats():
         return cached
 
     async with get_conn() as conn:
+        conditions = await _peak_conditions(conn)
+        tcs = tcs_at_hour_sql(conditions)
         row = await conn.fetchrow(
-            """
+            f"""
             WITH transit_access AS (
                 SELECT
                     ts.stop_id,
-                    AVG(lc.tcs_value) AS avg_surrounding_tcs
+                    AVG({tcs}) AS avg_surrounding_tcs
                 FROM transit_stops ts
                 LEFT JOIN segments s
                     ON s.geom && ST_Expand(ts.geom, 0.007)
@@ -188,22 +232,23 @@ async def get_walkability_stats():
             )
             SELECT
                 COUNT(*) AS total_stops,
-                COUNT(*) FILTER (WHERE avg_surrounding_tcs > 0.55) AS reachable,
+                COUNT(*) FILTER (WHERE avg_surrounding_tcs > 0.55) AS comfortable,
                 COALESCE(
                     COUNT(*) FILTER (WHERE avg_surrounding_tcs > 0.55)::float / NULLIF(COUNT(*), 0) * 100,
                     0
-                ) AS reachable_pct
+                ) AS comfortable_pct
             FROM transit_access
             """
         )
 
-        avg_tcs_val = await conn.fetchval("SELECT COALESCE(AVG(tcs_value), 0) FROM segment_live_comfort")
+        avg_tcs_val = await conn.fetchval(f"SELECT COALESCE(AVG({tcs}), 0) FROM segment_live_comfort lc")
 
     resp = WalkabilityStats(
         total_transit_stops=row["total_stops"] or 0,
-        reachable_within_10min=row["reachable"] or 0,
-        reachable_percentage=round(float(row["reachable_pct"] or 0), 1),
+        comfortable_stops=row["comfortable"] or 0,
+        comfortable_percentage=round(float(row["comfortable_pct"] or 0), 1),
         avg_tcs_city=round(float(avg_tcs_val or 0.0), 3),
+        conditions_hour=_reported_hour(conditions),
     )
     ttl_cache_set("dashboard:walkability", resp, ttl_sec=60.0)
     return resp
@@ -214,12 +259,12 @@ async def get_active_alerts():
     """Get active weather warnings."""
     async with get_conn() as conn:
         rows = await conn.fetch(
-            """
+            f"""
             SELECT title, severity, description, issued_at, expires_at
             FROM weather_alerts
             WHERE is_active = TRUE
               AND (expires_at IS NULL OR expires_at > NOW())
-            ORDER BY severity DESC, issued_at DESC
+            ORDER BY {ALERT_SEVERITY_RANK_SQL}, issued_at DESC
             """
         )
     return [
@@ -297,7 +342,8 @@ async def get_tcs_simulations():
                 sim.predicted_tcs_green,
                 sim.predicted_tcs_cool,
                 sim.tcs_improvement_green,
-                sim.tcs_improvement_cool
+                sim.tcs_improvement_cool,
+                sim.source
             FROM tcs_simulations sim
             JOIN segments s ON s.segment_id = sim.segment_id
             ORDER BY sim.tcs_improvement_green DESC
@@ -315,6 +361,7 @@ async def get_tcs_simulations():
             "predicted_tcs_cool": round(row["predicted_tcs_cool"], 3),
             "tcs_improvement_green": round(row["tcs_improvement_green"], 3),
             "tcs_improvement_cool": round(row["tcs_improvement_cool"], 3),
+            "source": row["source"],
         }
         for row in rows
     ]
@@ -324,29 +371,10 @@ async def get_tcs_simulations():
 
 @router.get("/heat-prediction")
 async def get_heat_prediction():
-    """Prediksi zona panas harian menggunakan tabel saji cepat & ML simulasi."""
+    """Daily heat outlook: real hourly forecast plus stored per-segment comfort and scenarios."""
     cached = ttl_cache_get("dashboard:heat_prediction")
     if cached is not None:
         return cached
-
-    hourly_heat_factor = {
-        6: -0.15,
-        7: -0.10,
-        8: -0.04,
-        9: 0.02,
-        10: 0.08,
-        11: 0.13,
-        12: 0.16,
-        13: 0.15,
-        14: 0.13,
-        15: 0.08,
-        16: 0.02,
-        17: -0.03,
-        18: -0.08,
-        19: -0.11,
-        20: -0.13,
-        21: -0.14,
-    }
 
     async with get_conn() as conn:
         hot_rows = await conn.fetch(
@@ -380,32 +408,53 @@ async def get_heat_prediction():
                 AVG(lc.tcs_value) AS avg_tcs,
                 AVG(lc.apparent_temp) AS avg_apparent_temp,
                 MAX(0.6 * lc.apparent_temp + 0.4 * lc.avg_lst) AS max_apparent_temp,
+                AVG(lc.shade_ratio) AS avg_shade,
                 AVG(sim.predicted_tcs_green) AS avg_green_tcs,
-                AVG(sim.predicted_tcs_cool) AS avg_cool_tcs
+                AVG(sim.predicted_tcs_cool) AS avg_cool_tcs,
+                MODE() WITHIN GROUP (ORDER BY sim.source) AS simulation_source
             FROM segment_live_comfort lc
             LEFT JOIN tcs_simulations sim ON lc.segment_id = sim.segment_id
             """
         )
 
-    avg_tcs = float(agg_row["avg_tcs"] or 0.68)
-    avg_green = float(agg_row["avg_green_tcs"] or min(1.0, avg_tcs + 0.06))
-    avg_cool = float(agg_row["avg_cool_tcs"] or min(1.0, avg_tcs + 0.04))
-    base_app_temp = float(agg_row["avg_apparent_temp"] or 32.5)
-
-    hourly_trend = []
-    for hour, factor in hourly_heat_factor.items():
-        hourly_trend.append(
-            {
-                "hour": hour,
-                "label": f"{hour:02d}:00",
-                "tcs_current": round(max(0.1, min(1.0, avg_tcs - factor * 0.3)), 3),
-                "tcs_green_scenario": round(max(0.1, min(1.0, avg_green - factor * 0.22)), 3),
-                "tcs_cool_scenario": round(max(0.1, min(1.0, avg_cool - factor * 0.18)), 3),
-                "apparent_temp": round(base_app_temp + factor * 4.5, 1),
-            }
+        forecast_rows = await conn.fetch(
+            """
+            SELECT hour_of_day, apparent_temp
+            FROM weather_hourly_forecast
+            WHERE forecast_date = (SELECT MAX(forecast_date) FROM weather_hourly_forecast)
+              AND hour_of_day BETWEEN 6 AND 21
+            ORDER BY hour_of_day
+            """
         )
 
-    total = int(agg_row["total_count"] or 1)
+        shade_rows = await conn.fetch(
+            """
+            SELECT slot, AVG(lc.shade_by_hour[slot])::double precision AS avg_shade
+            FROM segment_live_comfort lc
+            CROSS JOIN generate_series(1, 12) AS slot
+            GROUP BY slot
+            """
+        )
+
+    total = int(agg_row["total_count"] or 0)
+    if total == 0:
+        raise HTTPException(status_code=503, detail="Data kenyamanan termal belum tersedia.")
+
+    avg_tcs = float(agg_row["avg_tcs"])
+    base_app_temp = float(agg_row["avg_apparent_temp"])
+    forecast = [(int(row["hour_of_day"]), float(row["apparent_temp"])) for row in forecast_rows]
+
+    hourly_trend = build_hourly_trend(
+        avg_tcs=avg_tcs,
+        avg_green=float(agg_row["avg_green_tcs"]) if agg_row["avg_green_tcs"] is not None else None,
+        avg_cool=float(agg_row["avg_cool_tcs"]) if agg_row["avg_cool_tcs"] is not None else None,
+        avg_shade_now=float(agg_row["avg_shade"]),
+        avg_apparent_now=base_app_temp,
+        shade_by_slot={row["slot"]: row["avg_shade"] for row in shade_rows if row["avg_shade"] is not None},
+        forecast=forecast,
+    )
+    peak_heat_hour = max(forecast, key=lambda point: point[1])[0] if forecast else None
+
     hot_count = int(agg_row["hot_count"] or 0)
     warm_count = int(agg_row["warm_count"] or 0)
     cool_count = int(agg_row["cool_count"] or 0)
@@ -423,8 +472,8 @@ async def get_heat_prediction():
                 "highway_type": row["highway_type"] or "path",
                 "has_shade_tree": bool(row["has_shade_tree"]),
                 "current_tcs": round(current, 3),
-                "apparent_temp": round(float(row["apparent_temp"] or 32.5), 1),
-                "shade_ratio": round(float(row["shade_ratio"] or 0.0), 2),
+                "apparent_temp": round(float(row["apparent_temp"]), 1),
+                "shade_ratio": round(float(row["shade_ratio"]), 2),
                 "predicted_tcs_green": round(green, 3),
                 "predicted_tcs_cool": round(cool_pred, 3),
                 "improvement_pct": improvement_pct,
@@ -441,8 +490,9 @@ async def get_heat_prediction():
             "hot_percentage": round(hot_count / total * 100, 1),
             "avg_city_tcs": round(avg_tcs, 3),
             "avg_apparent_temp": round(base_app_temp, 1),
-            "max_apparent_temp": round(float(agg_row["max_apparent_temp"] or base_app_temp), 1),
-            "peak_heat_hour": 12,
+            "max_apparent_temp": round(float(agg_row["max_apparent_temp"]), 1),
+            "peak_heat_hour": peak_heat_hour,
+            "simulation_source": agg_row["simulation_source"],
         },
         "hourly_trend": hourly_trend,
         "hot_zones": hot_zones,

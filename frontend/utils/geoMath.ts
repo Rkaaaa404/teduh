@@ -262,3 +262,15 @@ export function attachDialogLightDismiss(dialog: HTMLDialogElement | null): () =
   };
 }
 
+/** Colour for a segment that has no real comfort score. */
+export const UNSCORED_SEGMENT_COLOR = '#CBD5E1';
+
+/** Format a backend timestamp as a short WIB label, or null if there is none. */
+export function formatDataAsOf(iso: string | null | undefined): string | null {
+  if (!iso) return null;
+  return new Date(iso).toLocaleString('id-ID', {
+    timeZone: 'Asia/Jakarta',
+    dateStyle: 'medium',
+    timeStyle: 'short',
+  });
+}

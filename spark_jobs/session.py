@@ -1,4 +1,4 @@
-"""Shared Laptop-Friendly SparkSession Singleton for COMMUTE-COOL.
+"""Shared Laptop-Friendly SparkSession Singleton for Teduh.
 
 Avoids launching 7 separate 2GB JVMs across pipeline steps.
 Caps CPU cores (`local[2]`), shuffle partitions (`8`), and driver heap (`1g`)
@@ -14,7 +14,7 @@ _SEDONA_REGISTERED: bool = False
 
 
 def get_or_create_spark(
-    app_name: str = "CommuteCool_UnifiedPipeline",
+    app_name: str = "Teduh_UnifiedPipeline",
     enable_sedona: bool = True,
 ) -> SparkSession:
     """Return an active laptop-tuned SparkSession (creating it once if needed)."""

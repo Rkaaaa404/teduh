@@ -5,14 +5,28 @@ Detects extreme weather warnings for Surabaya region.
 No API key needed (public RSS feed).
 """
 
+from __future__ import annotations
+
 import json
 import os
+import re
 from datetime import datetime
 
 import feedparser
 import requests
 
 from ingestion.config import BMKG_RSS_URL, ALERTS_DIR, SURABAYA_BBOX
+
+SURABAYA_AREA_CITIES = ("surabaya", "gresik", "sidoarjo")
+
+# Genteng, Sawahan and Tegalsari are left out: other East Java regencies have
+# kecamatan with the same names, and a Surabaya storm lists several districts.
+SURABAYA_DISTRICTS = re.compile(
+    r"\b(asemrowo|benowo|bubutan|bulak|dukuh pakis|gayungan|gubeng|gunung anyar"
+    r"|jambangan|karang pilang|kenjeran|krembangan|lakarsantri|mulyorejo"
+    r"|pabean cantian|pakal|rungkut|sambikerep|semampir|simokerto|sukolilo"
+    r"|sukomanunggal|tambaksari|tandes|tenggilis mejoyo|wiyung|wonocolo|wonokromo)\b"
+)
 
 
 def fetch_bmkg_alerts() -> list[dict]:
@@ -72,10 +86,15 @@ def _classify_severity(title: str) -> str:
 
 
 def _is_surabaya_relevant(alert: dict) -> bool:
-    """Check if alert mentions Surabaya or East Java."""
+    """True if the alert names Surabaya, a neighbouring city, or a Surabaya district.
+
+    A province-wide match is not enough: BMKG titles say "Jawa Timur" for storms
+    anywhere in the province, and the body lists kecamatan rather than cities.
+    """
     text = f"{alert.get('title', '')} {alert.get('description', '')}".lower()
-    keywords = ["surabaya", "jawa timur", "east java", "jatim", "gresik", "sidoarjo"]
-    return any(kw in text for kw in keywords)
+    if any(city in text for city in SURABAYA_AREA_CITIES):
+        return True
+    return "jawa timur" in text and SURABAYA_DISTRICTS.search(text) is not None
 
 
 def get_active_alerts() -> list[dict]:

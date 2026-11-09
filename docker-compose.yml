@@ -6,7 +6,7 @@ services:
   postgres:
     build:
       context: .
-      dockerfile: Dockerfile.postgres
+      dockerfile: docker/Dockerfile.postgres
     container_name: teduh_db
     mem_limit: 512m
     cpus: 1.5
@@ -51,7 +51,7 @@ services:
   api:
     build:
       context: .
-      dockerfile: Dockerfile.api
+      dockerfile: docker/Dockerfile.api
     container_name: teduh_api
     mem_limit: 256m
     cpus: 1.0
@@ -85,7 +85,7 @@ services:
     environment:
       - CLUSTER_NAME=commute_cool
     env_file:
-      - ./hadoop.env
+      - ./docker/hadoop.env
     volumes:
       - hadoop_namenode:/hadoop/dfs/name
     healthcheck:
@@ -106,7 +106,7 @@ services:
     environment:
       - SERVICE_PRECONDITION=namenode:9870
     env_file:
-      - ./hadoop.env
+      - ./docker/hadoop.env
     volumes:
       - hadoop_datanode:/hadoop/dfs/data
     depends_on:
@@ -126,7 +126,7 @@ services:
   spark-pipeline:
     build:
       context: .
-      dockerfile: Dockerfile.spark
+      dockerfile: docker/Dockerfile.spark
     container_name: teduh_spark
     profiles: ["pipeline"]
     mem_limit: 1536m

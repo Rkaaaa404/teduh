@@ -92,15 +92,15 @@ Nilai `multiplier` disesuaikan dengan profil **Personal Heat Budget** (toleransi
 
 ---
 
-## 5. Implementasi AI/ML (Decision Tree Regressor)
+## 5. Implementasi AI/ML (Regresi Linear)
 
 Fitur **"Prediksi Panas"** pada dashboard berjalan menggunakan model pembelajaran mesin (Machine Learning) yang dieksekusi di cluster Spark.
 
 *   **Pustaka:** `pyspark.ml` (Spark MLlib).
-*   **Algoritma:** `DecisionTreeRegressor` (Regressor Pohon Keputusan, kedalaman maks 5).
-*   **Tujuan Model:** Mempelajari pola data lingkungan Surabaya untuk memprediksi nilai TCS jalan berdasarkan NDVI, LST, Kualitas Udara (AQI), Rasio Naungan, dan Kemacetan.
+*   **Algoritma:** `LinearRegression` (regresi linear). TCS bersifat linear terhadap masukannya, sehingga model ini mengukur pengaruh tiap masukan dengan tepat (RMSE data uji 0,0004).
+*   **Tujuan Model:** Mempelajari pola data lingkungan Surabaya untuk memprediksi nilai TCS jalan berdasarkan NDVI, LST, Kualitas Udara (AQI), Rasio Naungan, Kemacetan, dan Kualitas Permukaan Jalan.
 *   **Simulasi Skenario Tata Kota (What-If Analysis):**
-    1.  **🌿 Skenario Hijau (+Pohon):** Menghitung nilai TCS baru jika kerapatan pohon (`avg_ndvi`) seluruh kota ditingkatkan sebesar `+0.25`.
+    1.  **🌿 Skenario Hijau (+Pohon):** Menghitung nilai TCS baru jika kerapatan pohon (`avg_ndvi`) seluruh kota ditingkatkan sebesar `+0.25` dan naungan (`avg_shade`) sebesar `+0.20`.
     2.  **❄️ Skenario Cool Pavement (+Cooling):** Menghitung nilai TCS baru jika seluruh jalan dilapisi aspal pemantul panas sehingga suhu permukaan (`avg_lst`) turun sebesar `-3.5°C`.
 *   **Letak Berkas Kode:**
     *   **Spark ML Job:** `spark_jobs/job_tcs_predictor.py`
@@ -143,8 +143,8 @@ Saat presentasi di depan dosen/penguji, ikuti skenario demo ini untuk memukau me
 **Q: Kenapa tidak memakai database NoSQL (seperti MongoDB) untuk data lakehouse?**
 *A: Karena sistem kami sangat bergantung pada relasi jaringan jalan (Graph) dan kueri spasial. PostgreSQL + PostGIS + pgRouting menyediakan fungsi routing spasial tingkat tinggi (`pgr_dijkstra` dan tipe data `GEOMETRY`) yang tidak dimiliki database NoSQL. Data lakehouse tetap disimpan dalam format semi-terstruktur (Parquet di HDFS) untuk analisis data skala besar.*
 
-**Q: Bagaimana model Decision Tree Regressor dilatih di Spark?**
-*A: Model dilatih pada Spark Session menggunakan data gabungan dari HDFS Gold Layer (berisi data historis TCS, kerapatan NDVI, LST, AQI, kemacetan lalu lintas per segmen). Spark MLlib merangkai data ini ke dalam vektor fitur (`VectorAssembler`) untuk melatih regressor pohon keputusan. Model kemudian menduga nilai TCS baru ketika nilai NDVI (+0.25) atau LST (-3.5°C) diubah.*
+**Q: Bagaimana model regresi linear dilatih di Spark?**
+*A: Model dilatih pada Spark Session menggunakan data gabungan dari HDFS Gold Layer (berisi data historis TCS, kerapatan NDVI, LST, AQI, kemacetan lalu lintas per segmen). Spark MLlib merangkai data ini ke dalam vektor fitur (`VectorAssembler`) untuk melatih model regresi linear. Model kemudian menduga nilai TCS baru ketika nilai NDVI (+0.25) atau LST (-3.5°C) diubah.*
 
 **Q: Kenapa waktu demo persentase zona panas di Top 50 selalu menunjukkan 100% pada kondisi Saat Ini?**
 *A: Karena kartu tersebut mengukur persentase kondisi kritis khusus untuk **50 segmen jalan terpanas** di seluruh kota. Karena merupakan 50 jalan terekstrim, nilai TCS mereka sangat rendah sehingga penyesuaian suhu harian saja tidak cukup menaikkan skor di atas ambang nyaman (0.5). Nilai baru akan turun di bawah 100% jika kita menerapkan intervensi mitigasi tata kota (skenario `+Pohon`).*

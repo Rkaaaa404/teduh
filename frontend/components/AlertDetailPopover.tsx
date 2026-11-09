@@ -98,7 +98,10 @@ function AlertDetailContent({
     }
   };
 
-  const activePct = stats ? Math.round(stats.still_active_pct * 100) : 100;
+  const activePct =
+    stats && stats.still_active_pct !== null
+      ? Math.round(stats.still_active_pct * 100)
+      : null;
 
   return (
     <aside
@@ -147,13 +150,15 @@ function AlertDetailContent({
                 Konfirmasi Warga
               </span>
               <span className="font-mono font-bold text-slate-900 tabular-nums">
-                {stats?.total_validations ?? 0} suara ({activePct}% aktif)
+                {activePct === null
+                  ? 'Belum ada validasi'
+                  : `${stats?.total_validations ?? 0} suara (${activePct}% aktif)`}
               </span>
             </div>
             <div className="mt-1.5 h-1.5 w-full overflow-hidden rounded-full bg-slate-200">
               <div
                 className="h-full rounded-full bg-[#0E7C86] transition-all"
-                style={{ width: `${activePct}%` }}
+                style={{ width: `${activePct ?? 0}%` }}
               />
             </div>
           </>

@@ -43,6 +43,10 @@ export const HeatPredictionTab: React.FC<HeatPredictionTabProps> = ({
   }
 
   const { summary, hourly_trend, hot_zones } = prediction;
+  const scenarioModelLabel =
+    summary.simulation_source === 'mllib'
+      ? 'Spark MLlib Simulation'
+      : 'Simulasi Formula TCS';
 
   return (
     <div className="space-y-5">
@@ -85,7 +89,9 @@ export const HeatPredictionTab: React.FC<HeatPredictionTabProps> = ({
             </span>
           </p>
           <p className="mt-1 text-[11px] text-slate-500">
-            Jam puncak terik sekitar {summary.peak_heat_hour}:00 WIB
+            {summary.peak_heat_hour === null
+              ? 'Prakiraan per jam belum tersedia'
+              : `Jam puncak terik sekitar ${summary.peak_heat_hour}:00 WIB`}
           </p>
         </div>
 
@@ -97,7 +103,7 @@ export const HeatPredictionTab: React.FC<HeatPredictionTabProps> = ({
             {simulations.length}
           </p>
           <p className="mt-1 text-[11px] text-slate-500">
-            Segmen hasil pemodelan Spark MLlib
+            Segmen hasil pemodelan ({scenarioModelLabel})
           </p>
         </div>
       </div>
@@ -110,17 +116,22 @@ export const HeatPredictionTab: React.FC<HeatPredictionTabProps> = ({
               Kurva Harian Kenyamanan Termal (06:00 – 21:00 WIB)
             </h3>
             <p className="text-xs text-slate-500">
-              Perbandingan kondisi eksisting terhadap skenario penambahan
-              kanopi pohon (+30%) dan <em>cool pavement</em>.
+              Prakiraan cuaca per jam, dibandingkan dengan skenario penambahan
+              kanopi pohon dan <em>cool pavement</em>.
             </p>
           </div>
           <span className="inline-flex items-center gap-1 rounded-full bg-teal-50 px-2.5 py-1 text-[11px] font-semibold text-[#0E7C86]">
             <Sparkles className="h-3.5 w-3.5" />
-            <span>Spark MLlib Simulation</span>
+            <span>{scenarioModelLabel}</span>
           </span>
         </div>
 
         <div className="h-68 w-full">
+          {hourly_trend.length === 0 ? (
+            <p className="flex h-full items-center justify-center text-xs text-slate-500">
+              Prakiraan per jam belum tersedia. Jalankan pembaruan data.
+            </p>
+          ) : (
           <ResponsiveContainer width="100%" height="100%">
             <LineChart
               data={hourly_trend}
@@ -156,7 +167,7 @@ export const HeatPredictionTab: React.FC<HeatPredictionTabProps> = ({
               <Line
                 type="monotone"
                 dataKey="tcs_green_scenario"
-                name="Skenario +30% Kanopi Pohon"
+                name="Skenario Penghijauan"
                 stroke="#1F8A5B"
                 strokeWidth={2.5}
                 dot={false}
@@ -172,6 +183,7 @@ export const HeatPredictionTab: React.FC<HeatPredictionTabProps> = ({
               />
             </LineChart>
           </ResponsiveContainer>
+          )}
         </div>
       </div>
 
@@ -327,7 +339,7 @@ export const HeatPredictionTab: React.FC<HeatPredictionTabProps> = ({
                     TCS Awal
                   </th>
                   <th className="border-b border-slate-200 px-3.5 py-2.5">
-                    +30% Pohon
+                    Penghijauan
                   </th>
                   <th className="border-b border-slate-200 px-3.5 py-2.5">
                     Cool Pavement

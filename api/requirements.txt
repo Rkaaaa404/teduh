@@ -1,6 +1,6 @@
 # ============================================================
 # Teduh API dependencies (FastAPI backend only)
-# Used by Dockerfile.api (local) and the AWS Lambda build (api/Makefile)
+# Used by docker/Dockerfile.api (local) and the AWS Lambda build (api/Makefile)
 # ============================================================
 fastapi==0.111.0
 uvicorn[standard]==0.30.1

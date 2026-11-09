@@ -17,7 +17,7 @@ import type {
   RouteResponse,
   RouteResult,
 } from '@/types';
-import { getTcsGrade } from '@/utils/geoMath';
+import { formatDataAsOf, getTcsGrade, UNSCORED_SEGMENT_COLOR } from '@/utils/geoMath';
 
 interface RoutePanelProps {
   routeData: RouteResponse | null;
@@ -83,6 +83,11 @@ export const RoutePanel: React.FC<RoutePanelProps> = ({
     (acc, s) => acc + Math.max(s.length_m, 1),
     0
   );
+  const dataAsOf = formatDataAsOf(routeData.data_as_of);
+  const conditionsLabel =
+    routeData.time_basis === 'forecast' && routeData.conditions_hour !== null
+      ? `Prakiraan pukul ${String(routeData.conditions_hour).padStart(2, '0')}:00 WIB`
+      : 'Kondisi data terakhir';
 
   return (
     <section
@@ -116,6 +121,11 @@ export const RoutePanel: React.FC<RoutePanelProps> = ({
 
       {!minimized && (
         <div className="space-y-3 overflow-y-auto p-3.5">
+          <p className="text-[10px] text-slate-500">
+            {conditionsLabel}
+            {dataAsOf ? ` • Data per ${dataAsOf} WIB` : ''}
+          </p>
+
           {/* Active BMKG Weather Warning if any */}
           {routeData.weather_alert && (
             <div className="flex items-start gap-2 rounded-xl border border-amber-200 bg-amber-50 px-2.5 py-2 text-[11px] text-amber-900">
@@ -198,15 +208,18 @@ export const RoutePanel: React.FC<RoutePanelProps> = ({
               <div className="flex h-2.5 w-full overflow-hidden rounded-full bg-slate-100 ring-1 ring-slate-200/70">
                 {activeRoute.segments.map((seg, idx) => {
                   const pct = (Math.max(seg.length_m, 1) / totalSegLength) * 100;
-                  const segGrade = getTcsGrade(seg.tcs_value);
+                  const segColor =
+                    seg.tcs_value === null
+                      ? UNSCORED_SEGMENT_COLOR
+                      : getTcsGrade(seg.tcs_value).color;
                   return (
                     <div
                       key={`${seg.segment_id}-${idx}`}
                       style={{
                         width: `${pct}%`,
-                        backgroundColor: segGrade.color,
+                        backgroundColor: segColor,
                       }}
-                      title={`Segmen #${seg.segment_id} • ${Math.round(seg.length_m)} m • TCS ${seg.tcs_value.toFixed(2)} • Teduh ${Math.round(seg.shade_ratio * 100)}%`}
+                      title={`Segmen #${seg.segment_id} • ${Math.round(seg.length_m)} m • TCS ${seg.tcs_value?.toFixed(2) ?? 'n/a'} • Teduh ${seg.shade_ratio === null ? 'n/a' : `${Math.round(seg.shade_ratio * 100)}%`}`}
                     />
                   );
                 })}
@@ -256,13 +269,16 @@ export const RoutePanel: React.FC<RoutePanelProps> = ({
             <details className="group rounded-xl border border-slate-200 bg-white text-xs">
               <summary className="flex cursor-pointer list-none items-center justify-between px-3 py-2 font-semibold text-slate-700">
                 <span>
-                  Rincian {activeRoute.segments.length} segmen koridor
+                  Sampel {activeRoute.segments.length} segmen sepanjang koridor
                 </span>
                 <ChevronDown className="h-3.5 w-3.5 text-slate-400 transition-transform group-open:rotate-180" />
               </summary>
               <div className="max-h-36 divide-y divide-slate-100 overflow-y-auto border-t border-slate-100 px-3 py-1">
                 {activeRoute.segments.map((seg, i) => {
-                  const g = getTcsGrade(seg.tcs_value);
+                  const badgeColor =
+                    seg.tcs_value === null
+                      ? UNSCORED_SEGMENT_COLOR
+                      : getTcsGrade(seg.tcs_value).color;
                   return (
                     <div
                       key={`${seg.segment_id}-${i}`}
@@ -285,9 +301,9 @@ export const RoutePanel: React.FC<RoutePanelProps> = ({
                         )}
                         <span
                           className="rounded px-1.5 py-0.5 text-[10px] font-bold text-white"
-                          style={{ backgroundColor: g.color }}
+                          style={{ backgroundColor: badgeColor }}
                         >
-                          {seg.tcs_value.toFixed(2)}
+                          {seg.tcs_value?.toFixed(2) ?? 'n/a'}
                         </span>
                       </div>
                     </div>

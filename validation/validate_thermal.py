@@ -114,7 +114,7 @@ def estimate_system_temperature(sample: dict, air_temp: float = 33.0) -> float:
     - Surface material correction
     - Shade reduction factor
     """
-    # Surface correction (same as ndvi_lst_estimator.py)
+    # Surface correction (same table as spark_jobs/utils/normalization.py)
     surface_corrections = {
         "asphalt": 8.0,
         "concrete": 6.0,

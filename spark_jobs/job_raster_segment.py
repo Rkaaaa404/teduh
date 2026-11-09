@@ -10,15 +10,17 @@ from __future__ import annotations
 
 from datetime import date
 from pyspark.sql import SparkSession, DataFrame
-from pyspark.sql.functions import col, lit, when, least, round as spark_round, coalesce
+from pyspark.sql.functions import col, lit, least, round as spark_round, coalesce
 
 from spark_jobs.config import JDBC_URL, JDBC_PROPS, GOLD_DIR
+from spark_jobs.live_inputs import require_current_weather
 from spark_jobs.session import get_or_create_spark
+from spark_jobs.utils.catalyst import lookup_expr
+from spark_jobs.utils.normalization import DEFAULT_SURFACE_TEMP_CORRECTION, SURFACE_TEMP_CORRECTION
 
 MAX_TREES_FOR_MAX_NDVI = 10.0
 NDVI_MIN = 0.10
 NDVI_MAX = 0.72
-DEFAULT_AIR_TEMP = 32.0
 
 
 def compute_raster_proxies(spark: SparkSession, air_temp: float, target_date: date) -> DataFrame:
@@ -41,18 +43,7 @@ def compute_raster_proxies(spark: SparkSession, air_temp: float, target_date: da
         4,
     )
 
-    correction_expr = (
-        when(col("surface_type") == "asphalt", lit(8.0))
-        .when(col("surface_type") == "concrete", lit(6.0))
-        .when(col("surface_type") == "concrete:plates", lit(5.5))
-        .when(col("surface_type") == "paving_stones", lit(4.0))
-        .when(col("surface_type") == "sett", lit(4.0))
-        .when(col("surface_type") == "compacted", lit(3.0))
-        .when(col("surface_type").isin("gravel", "fine_gravel", "unpaved"), lit(2.0))
-        .when(col("surface_type").isin("ground", "dirt"), lit(1.0))
-        .when(col("surface_type") == "grass", lit(-2.0))
-        .otherwise(lit(4.0))
-    )
+    correction_expr = lookup_expr("surface_type", SURFACE_TEMP_CORRECTION, DEFAULT_SURFACE_TEMP_CORRECTION)
 
     return base_df.select(
         col("segment_id"),
@@ -64,17 +55,16 @@ def compute_raster_proxies(spark: SparkSession, air_temp: float, target_date: da
 
 def run(air_temp: float | None = None, spark: SparkSession | None = None):
     """Main entry point for Raster Segmentation job."""
-    if air_temp is None:
-        air_temp = DEFAULT_AIR_TEMP
-
     today = date.today()
-    print(f"=== Spark Job 1: Raster Segmentation ({today}, air_temp={air_temp}°C) ===")
-
     own_session = spark is None
     if own_session:
         spark = get_or_create_spark("Teduh_RasterSegment")
 
     try:
+        if air_temp is None:
+            air_temp = require_current_weather(spark)["temperature_2m"]
+        print(f"=== Spark Job 1: Raster Segmentation ({today}, air_temp={air_temp}°C) ===")
+
         result_df = compute_raster_proxies(spark, air_temp, today).cache()
         row_count = result_df.count()
         print(f"  Computed raster scores for {row_count} segments")

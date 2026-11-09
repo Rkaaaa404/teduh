@@ -65,12 +65,13 @@ def load_to_postgis(cameras: list[dict]) -> int:
         stream_url = build_stream_url(cctv_id)
         wkt = f"SRID=4326;POINT({lng} {lat})"
 
+        # The pipeline runs this repeatedly and the table has no unique key on dishub_id.
         cur.execute("""
             INSERT INTO cctv_cameras (dishub_id, name, geom, stream_url, is_active)
-            VALUES (%s, %s, ST_GeomFromEWKT(%s), %s, TRUE)
-            ON CONFLICT DO NOTHING
-        """, (cctv_id, name, wkt, stream_url))
-        inserted += 1
+            SELECT %s, %s, ST_GeomFromEWKT(%s), %s, TRUE
+            WHERE NOT EXISTS (SELECT 1 FROM cctv_cameras WHERE dishub_id = %s)
+        """, (cctv_id, name, wkt, stream_url, cctv_id))
+        inserted += cur.rowcount
 
     conn.commit()
 

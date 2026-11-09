@@ -41,11 +41,7 @@ import {
   fetchWeatherWarnings,
   rejectIncidentReport,
 } from '@/services/api';
-import {
-  attachDialogLightDismiss,
-  extractGeometryCenter,
-  getTcsGrade,
-} from '@/utils/geoMath';
+import { attachDialogLightDismiss, extractGeometryCenter, formatDataAsOf, getTcsGrade } from '@/utils/geoMath';
 import { getPemkotOperatorUuid } from '@/utils/identity';
 import { HeatPredictionTab } from '@/components/HeatPredictionTab';
 
@@ -167,12 +163,22 @@ export const GovernmentDashboard: React.FC<GovernmentDashboardProps> = ({
     if (!dlg) return;
     if (open && !dlg.open) {
       dlg.showModal();
-      const ctrl = new AbortController();
-      void loadAllDashboardData(ctrl.signal);
-      return () => ctrl.abort();
     } else if (!open && dlg.open) {
       dlg.close();
     }
+  }, [open]);
+
+  // Separate from the effect above: React Strict Mode re-runs effects, and the dialog
+  // is already open on the second run, so loading there would never restart. The
+  // timer means Strict Mode's throwaway first run never starts a fetch.
+  useEffect(() => {
+    if (!open) return;
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => void loadAllDashboardData(ctrl.signal));
+    return () => {
+      clearTimeout(timer);
+      ctrl.abort();
+    };
   }, [open, loadAllDashboardData]);
 
   const handleApprove = async (report: IncidentReport) => {
@@ -368,7 +374,7 @@ export const GovernmentDashboard: React.FC<GovernmentDashboardProps> = ({
           {loading && !uhiData ? (
             <div className="flex h-64 flex-col items-center justify-center gap-2 text-xs text-slate-500">
               <Loader2 className="h-6 w-6 animate-spin text-[#0E7C86]" />
-              <span>Mengambil data spasial PostGIS & Spark MLlib...</span>
+              <span>Mengambil data spasial...</span>
             </div>
           ) : (
             <>
@@ -429,6 +435,15 @@ export const GovernmentDashboard: React.FC<GovernmentDashboardProps> = ({
                         </div>
                       </div>
 
+                      {formatDataAsOf(uhiData.summary.data_as_of) && (
+                        <p className="text-[11px] font-medium text-slate-800">
+                          Data per {formatDataAsOf(uhiData.summary.data_as_of)}{' '}
+                          WIB
+                          {uhiData.summary.conditions_hour != null &&
+                            ` · dinilai pada jam terpanas (${String(uhiData.summary.conditions_hour).padStart(2, '0')}:00 WIB)`}
+                        </p>
+                      )}
+
                       <div
                         tabIndex={0}
                         role="region"
@@ -438,7 +453,7 @@ export const GovernmentDashboard: React.FC<GovernmentDashboardProps> = ({
                         <table
                           style={
                             {
-                              '--label-2': '"Suhu Permukaan (LST)"',
+                              '--label-2': '"Suhu Permukaan (Estimasi)"',
                               '--label-3': '"Rasio Teduh"',
                               '--label-4': '"Skor TCS"',
                               '--label-5': '"Lokasi 3D"',
@@ -455,7 +470,7 @@ export const GovernmentDashboard: React.FC<GovernmentDashboardProps> = ({
                                 Nama Jalan / Segmen
                               </th>
                               <th className="border-b border-slate-200 px-4 py-2.5">
-                                Suhu Permukaan (LST)
+                                Suhu Permukaan (Estimasi)
                               </th>
                               <th className="border-b border-slate-200 px-4 py-2.5">
                                 Rasio Teduh
@@ -540,7 +555,7 @@ export const GovernmentDashboard: React.FC<GovernmentDashboardProps> = ({
                       {
                         '--label-2': '"Skor Prioritas"',
                         '--label-3': '"Rata-Rata TCS"',
-                        '--label-4': '"Volume Pejalan"',
+                        '--label-4': '"Akses Transit"',
                         '--label-5': '"Halte Terdekat"',
                         '--label-6': '"Rekomendasi Teknis"',
                       } as React.CSSProperties
@@ -562,7 +577,7 @@ export const GovernmentDashboard: React.FC<GovernmentDashboardProps> = ({
                           Rata-Rata TCS
                         </th>
                         <th className="border-b border-slate-200 px-4 py-2.5">
-                          Volume Pejalan
+                          Akses Transit
                         </th>
                         <th className="border-b border-slate-200 px-4 py-2.5">
                           Halte Terdekat
@@ -601,9 +616,9 @@ export const GovernmentDashboard: React.FC<GovernmentDashboardProps> = ({
                               </span>
                             </td>
                             <td className="px-4 py-3 capitalize text-slate-700">
-                              {c.pedestrian_volume === 'high'
+                              {c.transit_access === 'high'
                                 ? 'Tinggi'
-                                : c.pedestrian_volume === 'medium'
+                                : c.transit_access === 'medium'
                                   ? 'Sedang'
                                   : 'Rendah'}
                             </td>
@@ -638,21 +653,22 @@ export const GovernmentDashboard: React.FC<GovernmentDashboardProps> = ({
 
                   <div className="rounded-2xl border border-slate-200 bg-white p-5">
                     <p className="text-xs font-medium text-slate-500">
-                      Terjangkau Nyaman (≤ 10 Menit Jalan Kaki)
+                      Halte Berlingkungan Nyaman (TCS &gt; 0.55, radius ±780 m)
                     </p>
                     <p className="mt-2 font-mono text-3xl font-extrabold text-emerald-700 tabular-nums">
-                      {walkability.reachable_within_10min.toLocaleString(
+                      {walkability.comfortable_stops.toLocaleString(
                         'id-ID'
                       )}{' '}
                       <span className="text-base font-bold text-slate-500">
-                        ({walkability.reachable_percentage}%)
+                        ({walkability.comfortable_percentage}%
+                        {walkability.conditions_hour != null && ' saat jam terpanas'})
                       </span>
                     </p>
                     <div className="mt-3 h-2 w-full overflow-hidden rounded-full bg-slate-100">
                       <div
                         className="h-full rounded-full bg-emerald-600"
                         style={{
-                          width: `${Math.min(100, walkability.reachable_percentage)}%`,
+                          width: `${Math.min(100, walkability.comfortable_percentage)}%`,
                         }}
                       />
                     </div>

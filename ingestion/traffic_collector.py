@@ -107,5 +107,21 @@ def fetch_all_traffic() -> list[dict]:
     return results
 
 
+def get_latest_traffic() -> list[dict] | None:
+    """Read the most recent traffic file from raw storage."""
+    if not os.path.exists(TRAFFIC_DIR):
+        return None
+
+    files = sorted(
+        [f for f in os.listdir(TRAFFIC_DIR) if f.startswith("traffic_")],
+        reverse=True,
+    )
+    if not files:
+        return None
+
+    with open(os.path.join(TRAFFIC_DIR, files[0]), "r", encoding="utf-8") as f:
+        return json.load(f)
+
+
 if __name__ == "__main__":
     fetch_all_traffic()

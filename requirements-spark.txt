@@ -13,6 +13,7 @@ numpy==1.24.4
 
 # --- Database ---
 psycopg2-binary==2.9.9
+feedparser==6.0.11
 
 # --- Solar position ---
 pvlib==0.10.4

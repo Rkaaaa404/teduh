@@ -1,5 +1,8 @@
 """Spark Job 5: Graph Weight Export (Pure Catalyst Vectorized).
 
+Offline Gold artifact only: the API does not read `edge_weights`. Routing
+computes its cost at query time in `api/routes/navigation.py`.
+
 Optimized Architecture:
 - Reuses shared SparkSession (`spark_jobs.session`)
 - Replaces Python `@udf`s with native Catalyst arithmetic
@@ -11,7 +14,7 @@ import os
 from datetime import datetime, timedelta, timezone
 
 from pyspark.sql import SparkSession, DataFrame
-from pyspark.sql.functions import col, lit, when, coalesce
+from pyspark.sql.functions import col, lit, when
 
 from spark_jobs.config import JDBC_URL, JDBC_PROPS, GOLD_DIR
 from spark_jobs.session import get_or_create_spark
@@ -40,7 +43,7 @@ def compute_edge_weights(spark: SparkSession) -> DataFrame:
         properties=JDBC_PROPS,
     )
 
-    joined_df = segments_df.join(tcs_df, "segment_id", "left")
+    joined_df = segments_df.join(tcs_df, "segment_id", "inner")
 
     now = datetime.now(timezone.utc).replace(tzinfo=None)
     valid_from = now
@@ -51,8 +54,7 @@ def compute_edge_weights(spark: SparkSession) -> DataFrame:
         col("length_m") / lit(1.33),
     ).otherwise(lit(0.0))
 
-    tcs_clean_col = coalesce(col("tcs_value"), lit(0.5))
-    penalty_col = base_cost_col * ((lit(1.0) - tcs_clean_col) * lit(MAX_PENALTY_MULTIPLIER - 1.0))
+    penalty_col = base_cost_col * ((lit(1.0) - col("tcs_value")) * lit(MAX_PENALTY_MULTIPLIER - 1.0))
 
     return (
         joined_df.withColumn("base_cost", base_cost_col.cast("double"))
