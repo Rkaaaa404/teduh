@@ -37,6 +37,12 @@ FULL_TABLES=(
   transit_stops
   cctv_cameras
   weather_alerts
+  incident_reports
+  map_alerts
+  alert_validations
+  user_feedback
+  segment_live_comfort
+  segment_spatial_context
 )
 
 if [[ -z "${SUPABASE_DB_URL:-}" ]]; then

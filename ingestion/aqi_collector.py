@@ -37,10 +37,13 @@ def fetch_aqi(station: str = "surabaya") -> dict | None:
     data = response.json()
 
     if data.get("status") != "ok":
-        print(f"  Error: {data.get('data', 'Unknown error')}")
-        return None
-
-    aqi_data = data["data"]
+        print(f"  Station '{station}' unavailable ({data.get('data')}), falling back to Surabaya geo-feed...")
+        geo_data = fetch_aqi_by_coordinates()
+        if not geo_data:
+            return None
+        aqi_data = geo_data
+    else:
+        aqi_data = data["data"]
     print(f"  AQI: {aqi_data.get('aqi', 'N/A')}")
     print(f"  Dominant pollutant: {aqi_data.get('dominentpol', 'N/A')}")
 

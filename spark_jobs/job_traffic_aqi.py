@@ -1,199 +1,147 @@
 """Spark Job 4: Traffic & AQI Aggregation per segment.
 
-Geocodes raw traffic (TomTom) and AQI (WAQI) data to the nearest
-street segment, producing per-segment congestion and air quality values.
-
-Input: JSON files from data/raw/traffic/ and data/raw/aqi/ + segments (PostGIS)
-Output: Internal aggregated data used by Job 3 (TCS calculation)
+Optimized Architecture:
+- Eliminates slow correlated scalar SQL subquery + WKB deserialization per row
+- Reads numeric segment centroids directly from PostGIS and computes nearest
+  TomTom traffic station using vectorized Spark Catalyst expressions.
 """
+from __future__ import annotations
 
 import json
 import os
-from datetime import datetime
+from functools import reduce
 
 from pyspark.sql import SparkSession, DataFrame
-from pyspark.sql.functions import udf, col, lit
-from pyspark.sql.types import FloatType, IntegerType, StructType, StructField, StringType, DoubleType
+from pyspark.sql.functions import col, lit, least, struct, pow as spark_pow
 
-from sedona.register import SedonaRegistrator
-from sedona.utils import SedonaKryoRegistrator
-
-# --- Configuration ---
-from spark_jobs.config import JDBC_URL, JDBC_PROPS, RAW_DATA_DIR
+from spark_jobs.config import JDBC_URL, JDBC_PROPS, RAW_DATA_DIR, BRONZE_DIR, GOLD_DIR, HDFS_ENABLED
+from spark_jobs.session import get_or_create_spark
 
 
-def create_spark_session() -> SparkSession:
-    """Create SparkSession with Sedona."""
-    spark = (
-        SparkSession.builder
-        .appName("Teduh_TrafficAQI")
-        .master(os.getenv("SPARK_MASTER_URL", "local[*]"))
-        .config("spark.serializer", "org.apache.spark.serializer.KryoSerializer")
-        .config("spark.kryo.registrator", SedonaKryoRegistrator.getName)
-        .config("spark.driver.memory", "2g")
-        .getOrCreate()
-    )
-    SedonaRegistrator.registerAll(spark)
-    return spark
+def load_latest_traffic(spark: SparkSession) -> list[dict]:
+    """Read the most recent traffic data from HDFS Bronze or local cache."""
+    if HDFS_ENABLED:
+        try:
+            rows = spark.read.text(f"{BRONZE_DIR}/traffic").collect()
+            traffic_data = []
+            for r in rows:
+                try:
+                    parsed = json.loads(r[0])
+                    if isinstance(parsed, list):
+                        traffic_data.extend(parsed)
+                except Exception:
+                    pass
+            if traffic_data:
+                return traffic_data
+        except Exception:
+            pass
 
-
-def load_latest_traffic(spark: SparkSession):
-    """Read the most recent traffic data from HDFS Bronze storage."""
-    from spark_jobs.config import BRONZE_DIR
-    hdfs_path = f"{BRONZE_DIR}/traffic"
-    try:
-        df = spark.read.text(hdfs_path)
-        rows = df.collect()
-        traffic_data = []
-        for r in rows:
-            try:
-                traffic_data.extend(json.loads(r[0]))
-            except:
-                pass
-        return traffic_data
-    except Exception as e:
-        print(f"  Error reading traffic from HDFS Bronze: {e}. Falling back to local.")
-        # Fallback to local
-        traffic_dir = os.path.join(RAW_DATA_DIR, "traffic")
-        if not os.path.exists(traffic_dir):
-            return []
-        files = sorted([f for f in os.listdir(traffic_dir) if f.startswith("traffic_")], reverse=True)
-        if not files:
-            return []
-        with open(os.path.join(traffic_dir, files[0]), "r") as f:
-            return json.load(f)
+    traffic_dir = os.path.join(RAW_DATA_DIR, "traffic")
+    if not os.path.exists(traffic_dir):
+        return []
+    files = sorted([f for f in os.listdir(traffic_dir) if f.startswith("traffic_")], reverse=True)
+    if not files:
+        return []
+    with open(os.path.join(traffic_dir, files[0]), "r", encoding="utf-8") as f:
+        return json.load(f)
 
 
 def load_latest_aqi(spark: SparkSession) -> dict:
-    """Read the most recent AQI data from HDFS Bronze storage."""
-    from spark_jobs.config import BRONZE_DIR
-    hdfs_path = f"{BRONZE_DIR}/aqi"
-    try:
-        df = spark.read.text(hdfs_path)
-        rows = df.collect()
-        if rows:
-            return json.loads(rows[-1][0])
+    """Read the most recent AQI data from HDFS Bronze or local cache."""
+    if HDFS_ENABLED:
+        try:
+            rows = spark.read.text(f"{BRONZE_DIR}/aqi").collect()
+            if rows:
+                return json.loads(rows[-1][0])
+        except Exception:
+            pass
+
+    aqi_dir = os.path.join(RAW_DATA_DIR, "aqi")
+    if not os.path.exists(aqi_dir):
         return {"aqi": 50}
-    except Exception as e:
-        print(f"  Error reading AQI from HDFS Bronze: {e}. Falling back to local.")
-        # Fallback to local
-        aqi_dir = os.path.join(RAW_DATA_DIR, "aqi")
-        if not os.path.exists(aqi_dir):
-            return {"aqi": 50}
-        files = sorted([f for f in os.listdir(aqi_dir) if f.startswith("aqi_")], reverse=True)
-        if not files:
-            return {"aqi": 50}
-        with open(os.path.join(aqi_dir, files[0]), "r") as f:
-            return json.load(f)
+    files = sorted([f for f in os.listdir(aqi_dir) if f.startswith("aqi_")], reverse=True)
+    if not files:
+        return {"aqi": 50}
+    with open(os.path.join(aqi_dir, files[0]), "r", encoding="utf-8") as f:
+        return json.load(f)
 
 
 def aggregate_traffic_to_segments(spark: SparkSession) -> DataFrame:
-    """Geocode traffic data points to nearest segments.
-
-    For each traffic measurement point, find the nearest street segment
-    and assign the congestion_ratio to that segment.
-    Segments without nearby traffic data get a default moderate value.
-    """
-    print("  Loading traffic data...")
+    """Assign nearest TomTom congestion_ratio to each segment using pure Catalyst math."""
     traffic_data = load_latest_traffic(spark)
-
-    if not traffic_data:
-        print("  No traffic data available, using defaults")
-        # Return all segments with default congestion
-        segments_df = (
-            spark.read.jdbc(JDBC_URL, "segments", properties=JDBC_PROPS)
-            .select("segment_id")
-            .withColumn("congestion_ratio", lit(0.3))
-        )
-        return segments_df
-
-    # Create DataFrame from traffic points
-    traffic_schema = StructType([
-        StructField("name", StringType(), True),
-        StructField("lat", DoubleType(), True),
-        StructField("lng", DoubleType(), True),
-        StructField("congestion_ratio", DoubleType(), True),
-    ])
-
-    traffic_rows = [
-        (d.get("name", ""), d.get("lat", 0), d.get("lng", 0), d.get("congestion_ratio", 0.3))
+    valid_points = [
+        (float(d["lat"]), float(d["lng"]), float(d.get("congestion_ratio") or 0.3))
         for d in traffic_data
-        if d.get("lat") and d.get("lng")
+        if d.get("lat") is not None and d.get("lng") is not None
     ]
 
-    traffic_df = spark.createDataFrame(traffic_rows, schema=traffic_schema)
-    traffic_df.createOrReplaceTempView("traffic_points")
+    if not valid_points:
+        print("  No live TomTom points configured; assigning baseline 0.30 congestion")
+        return (
+            spark.read.jdbc(JDBC_URL, "(SELECT segment_id FROM segments) AS seg_ids", properties=JDBC_PROPS)
+            .withColumn("congestion_ratio", lit(0.3))
+        )
 
-    # Load segments
-    segments_df = spark.read.jdbc(JDBC_URL, "segments", properties=JDBC_PROPS)
-    segments_df.createOrReplaceTempView("segments")
-
-    # For each segment, find the nearest traffic point and assign its congestion
-    # Using a cross join with distance filter (simplified approach)
-    # In production, would use Sedona spatial join with KNN
-    result_df = spark.sql("""
-        SELECT
-            s.segment_id,
-            COALESCE(
-                (SELECT t.congestion_ratio
-                 FROM traffic_points t
-                 ORDER BY ST_Distance(
-                     ST_Point(t.lng, t.lat),
-                     ST_Centroid(ST_GeomFromWKB(s.geom))
-                 )
-                 LIMIT 1),
-                0.3
-            ) as congestion_ratio
-        FROM segments s
-    """)
-
-    return result_df
-
-
-def aggregate_aqi_to_segments(spark: SparkSession) -> float:
-    """Get city-wide AQI value.
-
-    Since AQI stations in Surabaya are sparse, we apply a uniform
-    city-wide AQI value to all segments (simplified approach).
+    centroid_query = """
+    (SELECT
+        segment_id,
+        ST_Y(ST_Centroid(geom)) AS lat,
+        ST_X(ST_Centroid(geom)) AS lng
+     FROM segments
+    ) AS seg_centroids
     """
-    aqi_data = load_latest_aqi(spark)
-    aqi_value = float(aqi_data.get("aqi", 50))
-    print(f"  City-wide AQI: {aqi_value}")
-    return aqi_value
+    seg_df = spark.read.jdbc(JDBC_URL, centroid_query, properties=JDBC_PROPS)
+
+    # `least(struct(dist_sq, ratio), ...)` picks the struct with minimum squared distance!
+    dist_structs = [
+        struct(
+            (spark_pow(col("lat") - lit(p_lat), 2) + spark_pow(col("lng") - lit(p_lng), 2)).alias("d2"),
+            lit(p_ratio).alias("ratio"),
+        )
+        for (p_lat, p_lng, p_ratio) in valid_points
+    ]
+
+    nearest_struct = dist_structs[0] if len(dist_structs) == 1 else least(*dist_structs)
+    return seg_df.select(
+        col("segment_id"),
+        nearest_struct.getField("ratio").cast("double").alias("congestion_ratio"),
+    )
 
 
-def run():
+def run(spark: SparkSession | None = None):
     """Main entry point for Traffic & AQI Aggregation job."""
     print("=== Spark Job 4: Traffic & AQI Aggregation ===")
-    spark = create_spark_session()
+    own_session = spark is None
+    if own_session:
+        spark = get_or_create_spark("Teduh_TrafficAQI")
 
     try:
         traffic_df = aggregate_traffic_to_segments(spark)
-        aqi_value = aggregate_aqi_to_segments(spark)
+        aqi_value = float(load_latest_aqi(spark).get("aqi", 50.0))
+        print(f"  City-wide AQI: {aqi_value}")
 
-        # Add AQI as uniform column
-        result_df = traffic_df.withColumn("aqi_value", lit(aqi_value))
-
+        result_df = traffic_df.withColumn("aqi_value", lit(aqi_value)).cache()
         count = result_df.count()
         print(f"  Aggregated traffic+AQI for {count} segments")
 
-        # Write to HDFS Gold (Parquet)
-        from spark_jobs.config import GOLD_DIR
         gold_path = f"{GOLD_DIR}/segment_traffic_aqi"
-        print(f"  Writing traffic & AQI to HDFS Gold Parquet: {gold_path}")
-        result_df.write.mode("overwrite").parquet(gold_path)
+        try:
+            result_df.write.mode("overwrite").parquet(gold_path)
+            print(f"  ✓ Written Gold Parquet: {gold_path}")
+        except Exception as exc:
+            print(f"  [Warning] Gold Parquet write skipped: {exc}")
 
-        # Write to PostgreSQL (Serving Layer Staging Table)
-        print("  Writing traffic & AQI to PostgreSQL staging...")
         (
-            result_df.write
-            .mode("overwrite")
+            result_df.coalesce(4)
+            .write.mode("overwrite")
+            .option("truncate", "true")
             .jdbc(JDBC_URL, "segment_traffic_aqi_staging", properties=JDBC_PROPS)
         )
-
-        print("=== Traffic & AQI Aggregation Complete ===")
+        result_df.unpersist()
+        print("  ✓ Written segment_traffic_aqi_staging to PostgreSQL")
     finally:
-        spark.stop()
+        if own_session and spark is not None:
+            spark.stop()
 
 
 if __name__ == "__main__":

@@ -1,185 +1,102 @@
 """Spark Job 1: Raster Segmentation (NDVI/LST per street segment).
 
-This job computes proxy NDVI and LST values for each street segment
-using tree density (from OSM) and surface temperature estimation.
-
-In production, this would process actual GeoTIFF rasters from
-Sentinel-2 (NDVI) and Landsat-8 (LST) via zonal statistics.
-For this prototype, we use OSM-based proxy estimation processed
-through Spark for distributed computation at scale.
-
-Input: segments table, trees table, buildings table (PostGIS)
-Output: segment_raster_scores table
+Optimized Architecture:
+- Reuses shared SparkSession (`spark_jobs.session`)
+- Reads pre-indexed `segment_spatial_context` + `segments` in ONE lightweight JDBC pass
+  (eliminating 16M unindexed JVM WKB cross-join evaluations)
+- Computes NDVI & LST proxies using 100% native Spark Catalyst expressions (zero Python @udf)
 """
+from __future__ import annotations
 
-import os
 from datetime import date
-
 from pyspark.sql import SparkSession, DataFrame
-from pyspark.sql.functions import udf, col, lit, count, avg, coalesce
-from pyspark.sql.types import FloatType
+from pyspark.sql.functions import col, lit, when, least, round as spark_round, coalesce
 
-from sedona.register import SedonaRegistrator
-from sedona.utils import SedonaKryoRegistrator
+from spark_jobs.config import JDBC_URL, JDBC_PROPS, GOLD_DIR
+from spark_jobs.session import get_or_create_spark
 
-# --- Configuration ---
-from spark_jobs.config import JDBC_URL, JDBC_PROPS
-
-# NDVI estimation parameters
-MAX_TREES_FOR_MAX_NDVI = 10
+MAX_TREES_FOR_MAX_NDVI = 10.0
 NDVI_MIN = 0.10
 NDVI_MAX = 0.72
-
-# LST estimation parameters (surface correction from air temp)
-SURFACE_TEMP_CORRECTION = {
-    "asphalt": 8.0,
-    "concrete": 6.0,
-    "paving_stones": 4.0,
-    "compacted": 3.0,
-    "gravel": 2.0,
-    "grass": -2.0,
-    "unpaved": 2.0,
-}
-DEFAULT_CORRECTION = 4.0
 DEFAULT_AIR_TEMP = 32.0
 
 
-def create_spark_session() -> SparkSession:
-    """Create SparkSession with Sedona for geospatial ops."""
-    spark = (
-        SparkSession.builder
-        .appName("Teduh_RasterSegment")
-        .master(os.getenv("SPARK_MASTER_URL", "local[*]"))
-        .config("spark.serializer", "org.apache.spark.serializer.KryoSerializer")
-        .config("spark.kryo.registrator", SedonaKryoRegistrator.getName)
-        .config("spark.driver.memory", "2g")
-        .getOrCreate()
-    )
-    SedonaRegistrator.registerAll(spark)
-    return spark
-
-
-def compute_ndvi_proxy(spark: SparkSession) -> DataFrame:
-    """Compute NDVI proxy based on tree density near each segment.
-
-    Uses Sedona spatial join to count trees within 30m buffer of each segment.
-    More trees = higher NDVI proxy (validated correlation r>0.7 in urban studies).
+def compute_raster_proxies(spark: SparkSession, air_temp: float, target_date: date) -> DataFrame:
+    """Compute NDVI and LST per segment in a single native Spark pass."""
+    query = """
+    (SELECT
+        s.segment_id,
+        s.surface_type,
+        COALESCE(ctx.nearby_trees, 0) AS tree_count
+     FROM segments s
+     LEFT JOIN segment_spatial_context ctx ON ctx.segment_id = s.segment_id
+    ) AS seg_raster_input
     """
-    print("  Computing NDVI proxy from tree density...")
+    base_df = spark.read.jdbc(JDBC_URL, query, properties=JDBC_PROPS)
 
-    # Load data from PostGIS
-    segments_df = spark.read.jdbc(JDBC_URL, "segments", properties=JDBC_PROPS)
-    trees_df = spark.read.jdbc(JDBC_URL, "trees", properties=JDBC_PROPS)
-
-    # Register as temp views for Sedona SQL
-    segments_df.createOrReplaceTempView("segments")
-    trees_df.createOrReplaceTempView("trees")
-
-    # Spatial join: count trees within ~30m (0.0003 degrees) of each segment
-    tree_count_df = spark.sql("""
-        SELECT
-            s.segment_id,
-            COUNT(t.tree_id) as tree_count
-        FROM segments s
-        LEFT JOIN trees t
-            ON ST_DWithin(
-                ST_GeomFromWKB(s.geom),
-                ST_GeomFromWKB(t.geom),
-                0.0003
-            )
-        GROUP BY s.segment_id
-    """)
-
-    # Calculate NDVI proxy
-    @udf(FloatType())
-    def calc_ndvi_proxy(tree_count):
-        if tree_count is None:
-            tree_count = 0
-        ratio = min(tree_count / MAX_TREES_FOR_MAX_NDVI, 1.0)
-        return float(NDVI_MIN + ratio * (NDVI_MAX - NDVI_MIN))
-
-    ndvi_df = tree_count_df.withColumn(
-        "avg_ndvi", calc_ndvi_proxy(col("tree_count"))
-    ).select("segment_id", "avg_ndvi")
-
-    return ndvi_df
-
-
-def compute_lst_proxy(spark: SparkSession, air_temp: float = DEFAULT_AIR_TEMP) -> DataFrame:
-    """Compute LST proxy based on surface material type.
-
-    Different materials absorb/emit heat differently:
-    - Asphalt: +8C above air temperature
-    - Concrete: +6C
-    - Grass: -2C (evapotranspiration cooling)
-    """
-    print(f"  Computing LST proxy (air temp: {air_temp}C)...")
-
-    segments_df = (
-        spark.read.jdbc(JDBC_URL, "segments", properties=JDBC_PROPS)
-        .select("segment_id", "surface_type")
+    ndvi_expr = spark_round(
+        lit(NDVI_MIN)
+        + least(coalesce(col("tree_count"), lit(0)).cast("double") / lit(MAX_TREES_FOR_MAX_NDVI), lit(1.0))
+        * lit(NDVI_MAX - NDVI_MIN),
+        4,
     )
 
-    @udf(FloatType())
-    def calc_lst(surface_type):
-        if surface_type is None:
-            correction = DEFAULT_CORRECTION
-        else:
-            correction = SURFACE_TEMP_CORRECTION.get(surface_type, DEFAULT_CORRECTION)
-        return float(air_temp + correction)
+    correction_expr = (
+        when(col("surface_type") == "asphalt", lit(8.0))
+        .when(col("surface_type") == "concrete", lit(6.0))
+        .when(col("surface_type") == "concrete:plates", lit(5.5))
+        .when(col("surface_type") == "paving_stones", lit(4.0))
+        .when(col("surface_type") == "sett", lit(4.0))
+        .when(col("surface_type") == "compacted", lit(3.0))
+        .when(col("surface_type").isin("gravel", "fine_gravel", "unpaved"), lit(2.0))
+        .when(col("surface_type").isin("ground", "dirt"), lit(1.0))
+        .when(col("surface_type") == "grass", lit(-2.0))
+        .otherwise(lit(4.0))
+    )
 
-    lst_df = segments_df.withColumn(
-        "avg_lst", calc_lst(col("surface_type"))
-    ).select("segment_id", "avg_lst")
+    return base_df.select(
+        col("segment_id"),
+        ndvi_expr.alias("avg_ndvi"),
+        spark_round(lit(float(air_temp)) + correction_expr, 2).alias("avg_lst"),
+        lit(str(target_date)).cast("date").alias("computed_at"),
+    )
 
-    return lst_df
 
-
-def run(air_temp: float = None):
+def run(air_temp: float | None = None, spark: SparkSession | None = None):
     """Main entry point for Raster Segmentation job."""
     if air_temp is None:
         air_temp = DEFAULT_AIR_TEMP
 
     today = date.today()
-    print(f"=== Spark Job 1: Raster Segmentation ({today}) ===")
-    print(f"  Mode: OSM proxy estimation (tree density + surface material)")
+    print(f"=== Spark Job 1: Raster Segmentation ({today}, air_temp={air_temp}°C) ===")
 
-    spark = create_spark_session()
+    own_session = spark is None
+    if own_session:
+        spark = get_or_create_spark("Teduh_RasterSegment")
 
     try:
-        # Compute NDVI and LST proxies
-        ndvi_df = compute_ndvi_proxy(spark)
-        lst_df = compute_lst_proxy(spark, air_temp)
-
-        # Join NDVI and LST
-        result_df = (
-            ndvi_df
-            .join(lst_df, "segment_id", "outer")
-            .withColumn("computed_at", lit(str(today)).cast("date"))
-        )
-
+        result_df = compute_raster_proxies(spark, air_temp, today).cache()
         row_count = result_df.count()
         print(f"  Computed raster scores for {row_count} segments")
 
-        # Write to HDFS Gold (Parquet)
-        from spark_jobs.config import GOLD_DIR
         gold_path = f"{GOLD_DIR}/segment_raster_scores"
-        print(f"  Writing raster scores to HDFS Gold Parquet: {gold_path}")
-        result_df.write.mode("overwrite").parquet(gold_path)
+        try:
+            result_df.write.mode("overwrite").parquet(gold_path)
+            print(f"  ✓ Written HDFS/Lakehouse Gold Parquet: {gold_path}")
+        except Exception as exc:
+            print(f"  [Warning] Gold Parquet write skipped: {exc}")
 
-        # Write to PostGIS (Serving Layer)
-        print("  Writing raster scores to PostgreSQL...")
         (
-            result_df.write
-            .mode("overwrite")
+            result_df.coalesce(4)
+            .write.mode("overwrite")
             .option("truncate", "true")
             .jdbc(JDBC_URL, "segment_raster_scores", properties=JDBC_PROPS)
         )
-
-        print("=== Raster Segmentation Complete ===")
-
+        result_df.unpersist()
+        print("  ✓ Written segment_raster_scores to PostgreSQL")
     finally:
-        spark.stop()
+        if own_session and spark is not None:
+            spark.stop()
 
 
 if __name__ == "__main__":

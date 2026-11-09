@@ -3,7 +3,7 @@
   "version": "1.0.0",
   "description": "Teduh Root Workspace",
   "scripts": {
-    "docker:up": "docker compose up -d postgres namenode datanode api",
+    "docker:up": "docker compose up -d",
     "docker:down": "docker compose down",
     "frontend": "npm run dev --prefix frontend",
     "dev": "npm run docker:up && npm run frontend"

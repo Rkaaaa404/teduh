@@ -1,461 +1,388 @@
 'use client';
 
-import { useState, useMemo } from 'react';
+import React, { useState } from 'react';
 import {
-  Card, Text, Badge, Group, Stack, SimpleGrid,
-  Slider, SegmentedControl, Table, ThemeIcon, Tooltip,
-  RingProgress, Progress,
-} from '@mantine/core';
-import {
-  IconFlame, IconTree, IconThermometer, IconAlertTriangle,
-  IconSnowflake, IconSun, IconChartLine, IconLeaf,
-} from '@tabler/icons-react';
-import {
-  LineChart, Line, XAxis, YAxis, CartesianGrid,
-  Tooltip as ReTooltip, Legend, ResponsiveContainer, ReferenceLine,
+  CartesianGrid,
+  Legend,
+  Line,
+  LineChart,
+  ResponsiveContainer,
+  Tooltip,
+  XAxis,
+  YAxis,
 } from 'recharts';
-import type { HeatPredictionData, HeatZone } from '@/services/api';
+import { ArrowUpRight, Flame, MapPin, Sparkles, Trees } from 'lucide-react';
+import type {
+  Coordinate,
+  HeatPredictionResponse,
+  SimulationItem,
+} from '@/types';
+import { extractGeometryCenter, getTcsGrade } from '@/utils/geoMath';
 
-// ── Helpers ──────────────────────────────────────────────────────────────────
-
-function severityColor(severity: string): string {
-  if (severity === 'critical') return '#e63946';
-  if (severity === 'hot') return '#f4a261';
-  return '#e9c46a';
+interface HeatPredictionTabProps {
+  prediction: HeatPredictionResponse | null;
+  simulations: SimulationItem[];
+  onFlyToMap: (coord: Coordinate, label?: string) => void;
 }
 
-function tcsToLabel(tcs: number): string {
-  if (tcs >= 0.7) return 'Nyaman';
-  if (tcs >= 0.6) return 'Cukup';
-  if (tcs >= 0.5) return 'Hangat';
-  if (tcs >= 0.45) return 'Panas';
-  return 'Kritis';
-}
-
-function tcsToColor(tcs: number): string {
-  if (tcs >= 0.7) return 'teal';
-  if (tcs >= 0.6) return 'lime';
-  if (tcs >= 0.5) return 'yellow';
-  if (tcs >= 0.45) return 'orange';
-  return 'red';
-}
-
-/** Apply an hourly factor to a baseline TCS value */
-function applyHourlyFactor(baseTcs: number, hour: number, scale: number = 0.3): number {
-  const FACTORS: Record<number, number> = {
-    6: -0.15, 7: -0.10, 8: -0.04, 9: 0.02, 10: 0.08,
-    11: 0.13, 12: 0.16, 13: 0.15, 14: 0.13, 15: 0.08,
-    16: 0.02, 17: -0.03, 18: -0.08, 19: -0.11, 20: -0.13, 21: -0.14,
-  };
-  const factor = FACTORS[hour] ?? 0;
-  return Math.max(0.1, Math.min(1.0, baseTcs - factor * scale));
-}
-
-/** Custom recharts tooltip */
-const CustomTooltip = ({ active, payload, label }: any) => {
-  if (!active || !payload?.length) return null;
-  return (
-    <div style={{
-      background: 'rgba(255, 255, 255, 0.96)', border: '1px solid #e9ecef',
-      borderRadius: 10, padding: '10px 14px', fontSize: 12,
-      boxShadow: '0 4px 12px rgba(0, 0, 0, 0.05)',
-    }}>
-      <p style={{ color: '#495057', marginBottom: 4, fontWeight: 600 }}>{label}</p>
-      {payload.map((p: any, i: number) => (
-        <p key={i} style={{ color: p.color, margin: '2px 0' }}>
-          {p.name}: <b>{p.value?.toFixed(3)}</b>
-        </p>
-      ))}
-    </div>
+export const HeatPredictionTab: React.FC<HeatPredictionTabProps> = ({
+  prediction,
+  simulations,
+  onFlyToMap,
+}) => {
+  const [subView, setSubView] = useState<'hotzones' | 'simulations'>(
+    'hotzones'
   );
-};
 
-// ── Component Props ───────────────────────────────────────────────────────────
+  if (!prediction) {
+    return (
+      <div className="rounded-2xl border border-slate-200 bg-white p-8 text-center text-xs text-slate-500">
+        Data prediksi panas belum tersedia di tabel <code className="font-mono">tcs_simulations</code>. Pastikan Spark pipeline telah dijalankan.
+      </div>
+    );
+  }
 
-interface Props {
-  data: HeatPredictionData;
-}
-
-// ── Main Component ────────────────────────────────────────────────────────────
-
-export default function HeatPredictionTab({ data }: Props) {
-  const [selectedHour, setSelectedHour] = useState(new Date().getHours());
-  const [scenario, setScenario] = useState<'current' | 'green' | 'cool'>('current');
-
-  const { summary, hourly_trend, hot_zones } = data;
-
-  // Clamp hour to 6-21 range
-  const displayHour = Math.max(6, Math.min(21, selectedHour));
-
-  // Hourly data point for the current slider position
-  const currentHourData = hourly_trend.find(h => h.hour === displayHour) ?? hourly_trend[0];
-
-  // Compute per-zone TCS at the selected hour for the selected scenario
-  const zonesAtHour = useMemo<(HeatZone & { display_tcs: number; display_severity: string })[]>(() => {
-    return hot_zones.map(zone => {
-      const baseTcs = scenario === 'green'
-        ? zone.predicted_tcs_green
-        : scenario === 'cool'
-          ? zone.predicted_tcs_cool
-          : zone.current_tcs;
-      const displayTcs = applyHourlyFactor(baseTcs, displayHour, scenario === 'current' ? 0.3 : 0.22);
-      const displaySeverity = displayTcs < 0.45 ? 'critical' : displayTcs < 0.55 ? 'hot' : 'warm';
-      return { ...zone, display_tcs: displayTcs, display_severity: displaySeverity };
-    }).sort((a, b) => a.display_tcs - b.display_tcs);
-  }, [hot_zones, scenario, displayHour]);
-
-  // City-level TCS at current hour + scenario
-  const cityTcsAtHour = scenario === 'current'
-    ? currentHourData?.tcs_current ?? summary.avg_city_tcs
-    : scenario === 'green'
-      ? currentHourData?.tcs_green_scenario ?? summary.avg_city_tcs
-      : currentHourData?.tcs_cool_scenario ?? summary.avg_city_tcs;
-
-  const hotPct = Math.round((zonesAtHour.filter(z => z.display_tcs < 0.5).length / Math.max(zonesAtHour.length, 1)) * 100);
-  const apparentTempAtHour = currentHourData?.apparent_temp ?? summary.avg_apparent_temp;
-
-  const isPeakHeat = displayHour >= 11 && displayHour <= 14;
-  const isCoolHour = displayHour < 8 || displayHour > 18;
-
-  // Chart data — overlay scenario line
-  const chartData = hourly_trend.map(h => ({
-    ...h,
-    selected: h.hour === displayHour ? (scenario === 'current' ? h.tcs_current : scenario === 'green' ? h.tcs_green_scenario : h.tcs_cool_scenario) : undefined,
-  }));
+  const { summary, hourly_trend, hot_zones } = prediction;
 
   return (
-    <Stack gap="md">
-      {/* ── Slider + Scenario ─────────────────────────────────── */}
-      <Card withBorder shadow="sm" p="lg" style={{
-        background: 'linear-gradient(135deg, #f4fbf7 0%, #f8f9fa 100%)',
-        borderColor: '#c3f2d7',
-      }}>
-        <Group justify="space-between" mb="sm">
-          <Group gap="xs">
-            <ThemeIcon size="sm" color={isPeakHeat ? 'red' : isCoolHour ? 'blue' : 'orange'} variant="light">
-              {isPeakHeat ? <IconFlame size={14} /> : isCoolHour ? <IconSnowflake size={14} /> : <IconSun size={14} />}
-            </ThemeIcon>
-            <Text fw={700} c="dark" size="sm" component="div">
-              Simulasi Jam <span style={{ color: isPeakHeat ? '#e63946' : '#228be6' }}>{`${displayHour.toString().padStart(2, '0')}:00`}</span>
-              {isPeakHeat && <Badge size="xs" color="red" ml="xs">Jam Panas</Badge>}
-              {isCoolHour && <Badge size="xs" color="blue" ml="xs">Jam Sejuk</Badge>}
-            </Text>
-          </Group>
-          <SegmentedControl
-            size="xs"
-            value={scenario}
-            onChange={(v) => setScenario(v as 'current' | 'green' | 'cool')}
-            data={[
-              { label: '🌆 Saat Ini', value: 'current' },
-              { label: '🌿 +Pohon', value: 'green' },
-              { label: '❄️ +Cooling', value: 'cool' },
-            ]}
-            styles={{
-              root: { background: 'rgba(0,0,0,0.03)' },
-              label: { fontSize: 11 },
-            }}
-          />
-        </Group>
+    <div className="space-y-5">
+      {/* Top KPI Cards */}
+      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+        <div className="rounded-2xl border border-slate-200 bg-white p-4">
+          <p className="text-xs font-medium text-slate-500">
+            Segmen Panas (TCS &lt; 0.50)
+          </p>
+          <p className="mt-1 font-mono text-2xl font-extrabold text-red-700 tabular-nums">
+            {summary.hot_segments.toLocaleString('id-ID')}
+          </p>
+          <p className="mt-1 text-[11px] text-slate-500">
+            {summary.hot_percentage}% dari{' '}
+            {summary.total_segments.toLocaleString('id-ID')} segmen
+          </p>
+        </div>
 
-        <Slider
-          min={6}
-          max={21}
-          step={1}
-          value={displayHour}
-          onChange={setSelectedHour}
-          marks={[
-            { value: 6, label: '06' },
-            { value: 9, label: '09' },
-            { value: 12, label: '12' },
-            { value: 15, label: '15' },
-            { value: 18, label: '18' },
-            { value: 21, label: '21' },
-          ]}
-          color={isPeakHeat ? 'red' : isCoolHour ? 'blue' : 'orange'}
-          styles={{
-            label: { background: isPeakHeat ? '#e63946' : '#339af0', color: 'white' },
-            markLabel: { color: 'var(--mantine-color-gray-6)', fontSize: 10 },
-          }}
-        />
-      </Card>
+        <div className="rounded-2xl border border-slate-200 bg-white p-4">
+          <p className="text-xs font-medium text-slate-500">
+            Rata-Rata TCS Kota
+          </p>
+          <p className="mt-1 font-mono text-2xl font-extrabold text-slate-900 tabular-nums">
+            {summary.avg_city_tcs.toFixed(3)}
+          </p>
+          <p className="mt-1 text-[11px] text-slate-500">
+            {summary.cool_segments.toLocaleString('id-ID')} segmen sudah teduh
+            (&gt;0.65)
+          </p>
+        </div>
 
-      {/* ── Stat Cards ────────────────────────────────────────────── */}
-      <SimpleGrid cols={{ base: 2, sm: 4 }}>
-        {/* TCS Kota */}
-        <Card withBorder shadow="xs" p="md" style={{
-          background: `linear-gradient(135deg, ${cityTcsAtHour >= 0.6 ? '#ebfaf2' : cityTcsAtHour >= 0.5 ? '#fff9db' : '#fff5f5'} 0%, #ffffff 100%)`,
-          borderColor: cityTcsAtHour >= 0.6 ? '#c3f2d7' : cityTcsAtHour >= 0.5 ? '#ffe066' : '#ffc9c9',
-        }}>
-          <Text size="xs" c="dimmed" tt="uppercase" fw={600} mb="xs">TCS Kota (Jam Ini)</Text>
-          <Group gap="xs" align="baseline">
-            <Text size="xl" fw={800} c={cityTcsAtHour >= 0.6 ? 'teal.8' : cityTcsAtHour >= 0.5 ? 'orange.8' : 'red.8'}>
-              {cityTcsAtHour.toFixed(3)}
-            </Text>
-            <Badge size="xs" color={tcsToColor(cityTcsAtHour)} variant="light">
-              {tcsToLabel(cityTcsAtHour)}
-            </Badge>
-          </Group>
-        </Card>
+        <div className="rounded-2xl border border-slate-200 bg-white p-4">
+          <p className="text-xs font-medium text-slate-500">
+            Suhu Terasa Rata-Rata / Maks
+          </p>
+          <p className="mt-1 font-mono text-2xl font-extrabold text-orange-700 tabular-nums">
+            {summary.avg_apparent_temp}°C{' '}
+            <span className="text-sm font-semibold text-slate-400">
+              / {summary.max_apparent_temp}°C
+            </span>
+          </p>
+          <p className="mt-1 text-[11px] text-slate-500">
+            Jam puncak terik sekitar {summary.peak_heat_hour}:00 WIB
+          </p>
+        </div>
 
-        {/* Suhu Terasa */}
-        <Card withBorder shadow="xs" p="md" style={{
-          background: 'linear-gradient(135deg, #fff9db 0%, #ffffff 100%)',
-          borderColor: '#ffe066',
-        }}>
-          <Text size="xs" c="dimmed" tt="uppercase" fw={600} mb="xs">Suhu Terasa</Text>
-          <Group gap="xs" align="baseline">
-            <Text size="xl" fw={800} c="orange.8">{apparentTempAtHour.toFixed(1)}°C</Text>
-            <ThemeIcon size="xs" color="orange" variant="transparent">
-              <IconThermometer size={12} />
-            </ThemeIcon>
-          </Group>
-        </Card>
+        <div className="rounded-2xl border border-slate-200 bg-white p-4">
+          <p className="text-xs font-medium text-slate-500">
+            Kandidat Intervensi Terbaik
+          </p>
+          <p className="mt-1 font-mono text-2xl font-extrabold text-[#0E7C86] tabular-nums">
+            {simulations.length}
+          </p>
+          <p className="mt-1 text-[11px] text-slate-500">
+            Segmen hasil pemodelan Spark MLlib
+          </p>
+        </div>
+      </div>
 
-        {/* % Area Panas */}
-        <Card withBorder shadow="xs" p="md" style={{
-          background: 'linear-gradient(135deg, #fff5f5 0%, #ffffff 100%)',
-          borderColor: '#ffc9c9',
-        }}>
-          <Text size="xs" c="dimmed" tt="uppercase" fw={600} mb="xs">% Zona Panas (Top 50)</Text>
-          <Group gap="xs" align="baseline">
-            <Text size="xl" fw={800} c="red.8">{hotPct}%</Text>
-            <Text size="xs" c="dimmed">TCS &lt; 0.5 dari Top 50</Text>
-          </Group>
-        </Card>
+      {/* Multi-Scenario Hourly TCS Curve (Recharts) */}
+      <div className="rounded-2xl border border-slate-200 bg-white p-4 sm:p-5">
+        <div className="mb-4 flex flex-col justify-between gap-1 sm:flex-row sm:items-center">
+          <div>
+            <h3 className="text-sm font-bold text-slate-900">
+              Kurva Harian Kenyamanan Termal (06:00 – 21:00 WIB)
+            </h3>
+            <p className="text-xs text-slate-500">
+              Perbandingan kondisi eksisting terhadap skenario penambahan
+              kanopi pohon (+30%) dan <em>cool pavement</em>.
+            </p>
+          </div>
+          <span className="inline-flex items-center gap-1 rounded-full bg-teal-50 px-2.5 py-1 text-[11px] font-semibold text-[#0E7C86]">
+            <Sparkles className="h-3.5 w-3.5" />
+            <span>Spark MLlib Simulation</span>
+          </span>
+        </div>
 
-        {/* Jam Panas Puncak */}
-        <Card withBorder shadow="xs" p="md" style={{
-          background: 'linear-gradient(135deg, #f8f9fa 0%, #ffffff 100%)',
-          borderColor: '#e9ecef',
-        }}>
-          <Text size="xs" c="dimmed" tt="uppercase" fw={600} mb="xs">Puncak Panas</Text>
-          <Group gap="xs" align="baseline">
-            <Text size="xl" fw={800} c="gray.8">{String(summary.peak_heat_hour).padStart(2, '0')}:00</Text>
-            <Text size="xs" c="dimmed">WIB</Text>
-          </Group>
-        </Card>
-      </SimpleGrid>
-
-      {/* ── Chart + Distribution ───────────────────────────────── */}
-      <SimpleGrid cols={{ base: 1, md: 2 }} spacing="md">
-        {/* Line Chart */}
-        <Card withBorder shadow="sm" p="md" style={{
-          background: '#ffffff',
-          borderColor: '#e9ecef',
-        }}>
-          <Group gap="xs" mb="md">
-            <ThemeIcon size="sm" color="orange" variant="light">
-              <IconChartLine size={14} />
-            </ThemeIcon>
-            <Text fw={700} c="dark" size="sm">Tren TCS Harian Surabaya</Text>
-          </Group>
-          <ResponsiveContainer width="100%" height={220}>
-            <LineChart data={chartData} margin={{ top: 5, right: 10, left: -20, bottom: 0 }}>
-              <CartesianGrid strokeDasharray="3 3" stroke="#e9ecef" />
-              <XAxis dataKey="label" tick={{ fill: '#495057', fontSize: 10 }} />
-              <YAxis domain={[0.4, 0.9]} tick={{ fill: '#495057', fontSize: 10 }} />
-              <ReTooltip content={<CustomTooltip />} />
-              <Legend wrapperStyle={{ fontSize: 11 }} />
-              <ReferenceLine
-                x={`${displayHour.toString().padStart(2, '0')}:00`}
-                stroke="#ced4da"
-                strokeDasharray="4 4"
-                label={{ value: '▼', fill: '#495057', fontSize: 10, position: 'top' }}
+        <div className="h-68 w-full">
+          <ResponsiveContainer width="100%" height="100%">
+            <LineChart
+              data={hourly_trend}
+              margin={{ top: 8, right: 16, left: 0, bottom: 4 }}
+            >
+              <CartesianGrid strokeDasharray="3 3" stroke="#E2E8F0" />
+              <XAxis
+                dataKey="label"
+                tick={{ fontSize: 11, fill: '#64748B' }}
+                stroke="#CBD5E1"
               />
+              <YAxis
+                domain={[0.3, 1.0]}
+                tick={{ fontSize: 11, fill: '#64748B' }}
+                stroke="#CBD5E1"
+              />
+              <Tooltip
+                contentStyle={{
+                  borderRadius: '12px',
+                  borderColor: '#E2E8F0',
+                  fontSize: '12px',
+                }}
+              />
+              <Legend wrapperStyle={{ fontSize: '12px' }} />
               <Line
                 type="monotone"
                 dataKey="tcs_current"
-                name="TCS Saat Ini"
-                stroke="#f4a261"
-                strokeWidth={2}
+                name="TCS Eksisting"
+                stroke="#D9532F"
+                strokeWidth={2.5}
                 dot={false}
-                activeDot={{ r: 4, fill: '#f4a261' }}
               />
-              {scenario === 'green' && (
-                <Line
-                  type="monotone"
-                  dataKey="tcs_green_scenario"
-                  name="TCS + Pohon"
-                  stroke="#40c057"
-                  strokeWidth={2}
-                  strokeDasharray="6 3"
-                  dot={false}
-                />
-              )}
-              {scenario === 'cool' && (
-                <Line
-                  type="monotone"
-                  dataKey="tcs_cool_scenario"
-                  name="TCS + Cooling"
-                  stroke="#339af0"
-                  strokeWidth={2}
-                  strokeDasharray="6 3"
-                  dot={false}
-                />
-              )}
+              <Line
+                type="monotone"
+                dataKey="tcs_green_scenario"
+                name="Skenario +30% Kanopi Pohon"
+                stroke="#1F8A5B"
+                strokeWidth={2.5}
+                dot={false}
+              />
+              <Line
+                type="monotone"
+                dataKey="tcs_cool_scenario"
+                name="Skenario Cool Pavement"
+                stroke="#0E7C86"
+                strokeWidth={2}
+                strokeDasharray="5 4"
+                dot={false}
+              />
             </LineChart>
           </ResponsiveContainer>
-        </Card>
-
-        {/* Distribution */}
-        <Card withBorder shadow="sm" p="md" style={{
-          background: '#ffffff',
-          borderColor: '#e9ecef',
-        }}>
-          <Group gap="xs" mb="md">
-            <ThemeIcon size="sm" color="grape" variant="light">
-              <IconAlertTriangle size={14} />
-            </ThemeIcon>
-            <Text fw={700} c="dark" size="sm">Distribusi Kondisi Kota</Text>
-          </Group>
-
-          <Group justify="center" mb="lg">
-            <RingProgress
-              size={140}
-              thickness={16}
-              roundCaps
-              sections={[
-                { value: (summary.hot_segments / summary.total_segments) * 100, color: '#e63946', tooltip: `Panas: ${summary.hot_segments}` },
-                { value: (summary.warm_segments / summary.total_segments) * 100, color: '#f4a261', tooltip: `Hangat: ${summary.warm_segments}` },
-                { value: (summary.cool_segments / summary.total_segments) * 100, color: '#40c057', tooltip: `Nyaman: ${summary.cool_segments}` },
-              ]}
-              label={
-                <Stack gap={0} align="center">
-                  <Text fw={800} size="lg" c="dark">{summary.hot_percentage}%</Text>
-                  <Text size="xs" c="dimmed">Panas</Text>
-                </Stack>
-              }
-            />
-          </Group>
-
-          <Stack gap="xs">
-            <Group justify="space-between">
-              <Group gap="xs">
-                <div style={{ width: 10, height: 10, borderRadius: '50%', background: '#e63946' }} />
-                <Text size="xs" c="dimmed">Panas (TCS &lt; 0.5)</Text>
-              </Group>
-              <Text size="xs" fw={600} c="red">{summary.hot_segments.toLocaleString()}</Text>
-            </Group>
-            <Progress value={(summary.hot_segments / summary.total_segments) * 100} color="red" size="xs" />
-
-            <Group justify="space-between">
-              <Group gap="xs">
-                <div style={{ width: 10, height: 10, borderRadius: '50%', background: '#f4a261' }} />
-                <Text size="xs" c="dimmed">Hangat (0.5–0.65)</Text>
-              </Group>
-              <Text size="xs" fw={600} c="orange">{summary.warm_segments.toLocaleString()}</Text>
-            </Group>
-            <Progress value={(summary.warm_segments / summary.total_segments) * 100} color="orange" size="xs" />
-
-            <Group justify="space-between">
-              <Group gap="xs">
-                <div style={{ width: 10, height: 10, borderRadius: '50%', background: '#40c057' }} />
-                <Text size="xs" c="dimmed">Nyaman (TCS &gt; 0.65)</Text>
-              </Group>
-              <Text size="xs" fw={600} c="teal">{summary.cool_segments.toLocaleString()}</Text>
-            </Group>
-            <Progress value={(summary.cool_segments / summary.total_segments) * 100} color="teal" size="xs" />
-          </Stack>
-        </Card>
-      </SimpleGrid>
-
-      {/* ── Hot Zones Table ────────────────────────────────────── */}
-      <Card withBorder shadow="sm" p="md" style={{
-        background: '#ffffff',
-        borderColor: '#e9ecef',
-      }}>
-        <Group justify="space-between" mb="md">
-          <Group gap="xs">
-            <ThemeIcon size="sm" color="red" variant="light">
-              <IconFlame size={14} />
-            </ThemeIcon>
-            <Text fw={700} c="dark" size="sm">
-              Top 20 Zona Terpanas — Jam {displayHour.toString().padStart(2, '0')}:00
-            </Text>
-          </Group>
-          <Group gap="xs">
-            <Badge size="xs" color="orange" variant="light" leftSection={<IconLeaf size={10} />}>
-              Prediksi dari Spark ML
-            </Badge>
-          </Group>
-        </Group>
-
-        <div style={{ overflowX: 'auto' }}>
-          <Table striped highlightOnHover verticalSpacing="xs" styles={{
-            table: { background: 'transparent' },
-            thead: { background: '#f8f9fa' },
-            th: { color: '#495057', fontSize: 11, fontWeight: 600, textTransform: 'uppercase', borderBottom: '1px solid #dee2e6' },
-            td: { borderBottom: '1px solid #e9ecef', color: '#212529' },
-            tr: { borderBottom: '1px solid #e9ecef' },
-          }}>
-            <Table.Thead>
-              <Table.Tr>
-                <Table.Th>#</Table.Th>
-                <Table.Th>Nama Jalan</Table.Th>
-                <Table.Th>TCS Sekarang</Table.Th>
-                <Table.Th>TCS + Pohon</Table.Th>
-                <Table.Th>TCS + Cooling</Table.Th>
-                <Table.Th>Potensi Naik</Table.Th>
-                <Table.Th>Status</Table.Th>
-              </Table.Tr>
-            </Table.Thead>
-            <Table.Tbody>
-              {zonesAtHour.slice(0, 20).map((zone, i) => (
-                <Table.Tr key={zone.segment_id}>
-                  <Table.Td>
-                    <Text size="xs" c="dimmed">{i + 1}</Text>
-                  </Table.Td>
-                  <Table.Td>
-                    <Group gap="xs">
-                      {zone.has_shade_tree && (
-                        <Tooltip label="Sudah ada pohon" position="top">
-                          <ThemeIcon size="xs" color="teal" variant="transparent">
-                            <IconTree size={10} />
-                          </ThemeIcon>
-                        </Tooltip>
-                      )}
-                      <Text size="xs" fw={500}>{zone.street_name}</Text>
-                    </Group>
-                  </Table.Td>
-                  <Table.Td>
-                    <Badge
-                      size="sm"
-                      variant="filled"
-                      style={{ background: severityColor(zone.display_severity) }}
-                    >
-                      {zone.display_tcs.toFixed(3)}
-                    </Badge>
-                  </Table.Td>
-                  <Table.Td>
-                    <Text size="xs" c="teal" fw={600}>{zone.predicted_tcs_green.toFixed(3)}</Text>
-                  </Table.Td>
-                  <Table.Td>
-                    <Text size="xs" c="cyan" fw={600}>{zone.predicted_tcs_cool.toFixed(3)}</Text>
-                  </Table.Td>
-                  <Table.Td>
-                    <Badge
-                      size="xs"
-                      color={zone.improvement_pct > 15 ? 'teal' : zone.improvement_pct > 5 ? 'lime' : 'gray'}
-                      variant="light"
-                    >
-                      +{zone.improvement_pct}%
-                    </Badge>
-                  </Table.Td>
-                  <Table.Td>
-                    <Badge
-                      size="xs"
-                      color={zone.display_severity === 'critical' ? 'red' : zone.display_severity === 'hot' ? 'orange' : 'yellow'}
-                      variant="dot"
-                    >
-                      {zone.display_severity === 'critical' ? 'Kritis' : zone.display_severity === 'hot' ? 'Panas' : 'Hangat'}
-                    </Badge>
-                  </Table.Td>
-                </Table.Tr>
-              ))}
-            </Table.Tbody>
-          </Table>
         </div>
-      </Card>
-    </Stack>
+      </div>
+
+      {/* Sub-Switch: Top 50 Hot Zones vs Top 50 Greening Gain Simulations */}
+      <div className="space-y-3">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <div className="inline-flex rounded-xl bg-slate-100 p-1 text-xs font-semibold">
+            <button
+              type="button"
+              onClick={() => setSubView('hotzones')}
+              className={`flex items-center gap-1.5 rounded-lg px-3 py-1.5 transition-all ${
+                subView === 'hotzones'
+                  ? 'bg-white text-slate-900 shadow-xs'
+                  : 'text-slate-600 hover:text-slate-900'
+              }`}
+            >
+              <Flame className="h-3.5 w-3.5 text-orange-600" />
+              <span>50 Zona Terpanas ({hot_zones.length})</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setSubView('simulations')}
+              className={`flex items-center gap-1.5 rounded-lg px-3 py-1.5 transition-all ${
+                subView === 'simulations'
+                  ? 'bg-white text-slate-900 shadow-xs'
+                  : 'text-slate-600 hover:text-slate-900'
+              }`}
+            >
+              <Trees className="h-3.5 w-3.5 text-emerald-600" />
+              <span>Dampak Penghijauan Tertinggi ({simulations.length})</span>
+            </button>
+          </div>
+        </div>
+
+        {subView === 'hotzones' ? (
+          <div
+            tabIndex={0}
+            role="region"
+            aria-labelledby="hotzones-caption"
+            className="table-wrapper"
+          >
+            <table
+              style={
+                {
+                  '--label-2': '"Tipe Jalan"',
+                  '--label-3': '"Suhu Terasa"',
+                  '--label-4': '"Peneduh"',
+                  '--label-5': '"TCS Saat Ini"',
+                  '--label-6': '"Prediksi Hijau"',
+                } as React.CSSProperties
+              }
+              className="text-left text-xs"
+            >
+              <caption id="hotzones-caption" className="sr-only">
+                Daftar 50 segmen zona terpanas beserta proyeksi kenaikan TCS
+              </caption>
+              <thead className="bg-slate-50 text-[11px] font-semibold text-slate-600">
+                <tr>
+                  <th className="border-b border-slate-200 px-3.5 py-2.5">
+                    Segmen Jalan
+                  </th>
+                  <th className="border-b border-slate-200 px-3.5 py-2.5">
+                    Tipe
+                  </th>
+                  <th className="border-b border-slate-200 px-3.5 py-2.5">
+                    Suhu Terasa
+                  </th>
+                  <th className="border-b border-slate-200 px-3.5 py-2.5">
+                    Rasio Teduh
+                  </th>
+                  <th className="border-b border-slate-200 px-3.5 py-2.5">
+                    TCS Saat Ini
+                  </th>
+                  <th className="border-b border-slate-200 px-3.5 py-2.5">
+                    Skenario Hijau
+                  </th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100">
+                {hot_zones.map((z) => {
+                  const grade = getTcsGrade(z.current_tcs);
+                  return (
+                    <tr key={z.segment_id} className="hover:bg-slate-50/80">
+                      <th
+                        scope="row"
+                        className="px-3.5 py-2.5 font-semibold text-slate-900"
+                      >
+                        <div>{z.street_name}</div>
+                        <div className="font-mono text-[10px] font-normal text-slate-400">
+                          ID #{z.segment_id}
+                        </div>
+                      </th>
+                      <td className="px-3.5 py-2.5 text-slate-600">
+                        {z.highway_type}
+                      </td>
+                      <td className="px-3.5 py-2.5 font-mono font-semibold text-orange-700 tabular-nums">
+                        {z.apparent_temp.toFixed(1)}°C
+                      </td>
+                      <td className="px-3.5 py-2.5 font-mono text-slate-600 tabular-nums">
+                        {Math.round(z.shade_ratio * 100)}%
+                      </td>
+                      <td className="px-3.5 py-2.5 font-mono tabular-nums">
+                        <span
+                          className="rounded px-1.5 py-0.5 text-[11px] font-bold text-white"
+                          style={{ backgroundColor: grade.color }}
+                        >
+                          {z.current_tcs.toFixed(3)}
+                        </span>
+                      </td>
+                      <td className="px-3.5 py-2.5 font-mono tabular-nums">
+                        <span className="font-bold text-emerald-700">
+                          {z.predicted_tcs_green.toFixed(3)}
+                        </span>
+                        <span className="ml-1.5 inline-flex items-center text-[10px] font-semibold text-emerald-600">
+                          <ArrowUpRight className="h-3 w-3" />+
+                          {z.improvement_pct}%
+                        </span>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        ) : (
+          <div
+            tabIndex={0}
+            role="region"
+            aria-labelledby="sim-caption"
+            className="table-wrapper"
+          >
+            <table
+              style={
+                {
+                  '--label-2': '"TCS Awal"',
+                  '--label-3': '"Prediksi Pohon"',
+                  '--label-4': '"Prediksi Cool Pavement"',
+                  '--label-5': '"Kenaikan TCS"',
+                  '--label-6': '"Inspeksi Peta"',
+                } as React.CSSProperties
+              }
+              className="text-left text-xs"
+            >
+              <caption id="sim-caption" className="sr-only">
+                Peringkat 50 segmen dengan kenaikan kenyamanan tertinggi
+              </caption>
+              <thead className="bg-slate-50 text-[11px] font-semibold text-slate-600">
+                <tr>
+                  <th className="border-b border-slate-200 px-3.5 py-2.5">
+                    Nama Jalan / Segmen
+                  </th>
+                  <th className="border-b border-slate-200 px-3.5 py-2.5">
+                    TCS Awal
+                  </th>
+                  <th className="border-b border-slate-200 px-3.5 py-2.5">
+                    +30% Pohon
+                  </th>
+                  <th className="border-b border-slate-200 px-3.5 py-2.5">
+                    Cool Pavement
+                  </th>
+                  <th className="border-b border-slate-200 px-3.5 py-2.5">
+                    Gain Hijau
+                  </th>
+                  <th className="border-b border-slate-200 px-3.5 py-2.5 text-right">
+                    Peta 3D
+                  </th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100">
+                {simulations.map((sim) => {
+                  const center = extractGeometryCenter(sim.geometry);
+                  return (
+                    <tr key={sim.segment_id} className="hover:bg-slate-50/80">
+                      <th
+                        scope="row"
+                        className="px-3.5 py-2.5 font-semibold text-slate-900"
+                      >
+                        {sim.street_name}
+                      </th>
+                      <td className="px-3.5 py-2.5 font-mono text-slate-600 tabular-nums">
+                        {sim.current_tcs.toFixed(3)}
+                      </td>
+                      <td className="px-3.5 py-2.5 font-mono font-bold text-emerald-700 tabular-nums">
+                        {sim.predicted_tcs_green.toFixed(3)}
+                      </td>
+                      <td className="px-3.5 py-2.5 font-mono text-[#0E7C86] tabular-nums">
+                        {sim.predicted_tcs_cool.toFixed(3)}
+                      </td>
+                      <td className="px-3.5 py-2.5 font-mono font-bold text-emerald-600 tabular-nums">
+                        +{sim.tcs_improvement_green.toFixed(3)}
+                      </td>
+                      <td className="px-3.5 py-2.5 text-right">
+                        {center && (
+                          <button
+                            type="button"
+                            onClick={() => onFlyToMap(center, sim.street_name)}
+                            className="inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-2.5 py-1 text-[11px] font-semibold text-slate-700 hover:bg-teal-50 hover:text-[#0E7C86]"
+                          >
+                            <MapPin className="h-3 w-3" />
+                            <span>Lihat</span>
+                          </button>
+                        )}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+    </div>
   );
-}
+};

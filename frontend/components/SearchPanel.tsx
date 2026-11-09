@@ -1,229 +1,401 @@
 'use client';
-import { Paper, Autocomplete, Button, Select, Stack, ActionIcon, Group, Text, Loader } from '@mantine/core';
-import { IconMapPin, IconTarget, IconCurrentLocation, IconArrowsVertical, IconSun, IconCloud } from '@tabler/icons-react';
-import { useState, useCallback, useEffect, useRef } from 'react';
-import type { Coordinate, HeatTolerance } from '../types';
-import { fetchWeather } from '../services/api';
 
-interface Props {
-  origin: Coordinate | null;
-  destination: Coordinate | null;
+import React, { useEffect, useState } from 'react';
+import {
+  ArrowUpDown,
+  ChevronDown,
+  ChevronUp,
+  Crosshair,
+  Loader2,
+  LocateFixed,
+  MapPin,
+  Navigation,
+  Search,
+  Trash2,
+} from 'lucide-react';
+import type {
+  HeatTolerance,
+  NominatimSearchResult,
+  PlacePoint,
+} from '@/types';
+import type { MapPickTarget } from '@/components/MapView';
+import { searchPlacesSurabaya } from '@/services/api';
+
+interface SearchPanelProps {
+  origin: PlacePoint | null;
+  destination: PlacePoint | null;
   tolerance: HeatTolerance;
-  onToleranceChange: (v: HeatTolerance) => void;
-  onSearch: () => void;
-  onSetOrigin: (c: Coordinate) => void;
-  onSetDestination: (c: Coordinate) => void;
-  loading: boolean;
-  clickMode: 'origin' | 'destination';
-  onLocateGPS: (c: Coordinate) => void;
+  pickTarget: MapPickTarget;
+  loadingRoute: boolean;
+  errorMessage: string | null;
+  hidden?: boolean;
+  onSelectOrigin: (point: PlacePoint | null) => void;
+  onSelectDestination: (point: PlacePoint | null) => void;
+  onSwapPoints: () => void;
+  onClearAll: () => void;
+  onToleranceChange: (t: HeatTolerance) => void;
+  onPickTargetChange: (target: MapPickTarget) => void;
+  onUseMyGpsForOrigin: () => void;
+  onSubmitRoute: () => void;
 }
 
-async function geocodeLocation(query: string): Promise<Array<{label: string, lat: number, lng: number}>> {
-  if (!query || query.length < 3) return [];
-  try {
-    const res = await fetch(
-      `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(query + ', Surabaya')}&limit=5&countrycodes=id`
-    );
-    const data = await res.json();
-    return data.map((d: any) => ({
-      label: d.display_name.split(',')[0] + ', ' + d.display_name.split(',')[1],
-      lat: parseFloat(d.lat),
-      lng: parseFloat(d.lon)
-    }));
-  } catch {
-    return [];
-  }
-}
+const TOLERANCE_OPTIONS: Array<{
+  value: HeatTolerance;
+  title: string;
+  budget: string;
+}> = [
+  { value: 'low', title: 'Rendah', budget: 'Maks 8 mnt' },
+  { value: 'medium', title: 'Sedang', budget: 'Maks 15 mnt' },
+  { value: 'high', title: 'Tinggi', budget: 'Maks 25 mnt' },
+];
 
-async function reverseGeocode(lat: number, lng: number): Promise<string> {
-  try {
-    const res = await fetch(`https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lng}`);
-    const data = await res.json();
-    if (data && data.address) {
-      return data.address.road || data.address.suburb || data.display_name.split(',')[0];
-    }
-  } catch { /* ignore */ }
-  return `${lat.toFixed(4)}, ${lng.toFixed(4)}`;
-}
+export const SearchPanel: React.FC<SearchPanelProps> = ({
+  origin,
+  destination,
+  tolerance,
+  pickTarget,
+  loadingRoute,
+  errorMessage,
+  hidden = false,
+  onSelectOrigin,
+  onSelectDestination,
+  onSwapPoints,
+  onClearAll,
+  onToleranceChange,
+  onPickTargetChange,
+  onUseMyGpsForOrigin,
+  onSubmitRoute,
+}) => {
+  const [collapsed, setCollapsed] = useState<boolean>(false);
+  const [activeField, setActiveField] = useState<
+    'origin' | 'destination' | null
+  >(null);
+  const [draftQuery, setDraftQuery] = useState<string>('');
+  const [suggestions, setSuggestions] = useState<NominatimSearchResult[]>([]);
+  const [searching, setSearching] = useState<boolean>(false);
 
-export default function SearchPanel({
-  origin, destination, tolerance, onToleranceChange, onSearch, onSetOrigin, onSetDestination, loading, clickMode, onLocateGPS
-}: Props) {
-  const [originText, setOriginText] = useState('');
-  const [destText, setDestText] = useState('');
-  const [originOptions, setOriginOptions] = useState<{label: string, lat: number, lng: number}[]>([]);
-  const [destOptions, setDestOptions] = useState<{label: string, lat: number, lng: number}[]>([]);
-  const [weather, setWeather] = useState<{temp: number, apparent: number} | null>(null);
-  
-  const searchTimeoutRef = useRef<NodeJS.Timeout>(null);
-
+  // Debounced Nominatim Search strictly driven by user typing while field is active
   useEffect(() => {
-    fetchWeather().then(setWeather);
-  }, []);
-
-  // Update text when coords change externally (e.g. map click)
-  useEffect(() => {
-    if (origin) {
-      reverseGeocode(origin.lat, origin.lng).then(name => setOriginText(name));
-    } else {
-      setOriginText('');
+    if (!activeField || draftQuery.trim().length < 2) {
+      return;
     }
-  }, [origin]);
 
-  useEffect(() => {
-    if (destination) {
-      reverseGeocode(destination.lat, destination.lng).then(name => setDestText(name));
-    } else {
-      setDestText('');
-    }
-  }, [destination]);
-
-  const onOriginInput = (val: string) => {
-    setOriginText(val);
-    if (searchTimeoutRef.current) clearTimeout(searchTimeoutRef.current);
-    searchTimeoutRef.current = setTimeout(async () => {
-      const opts = await geocodeLocation(val);
-      setOriginOptions(opts);
-    }, 500);
-  };
-
-  const onDestInput = (val: string) => {
-    setDestText(val);
-    if (searchTimeoutRef.current) clearTimeout(searchTimeoutRef.current);
-    searchTimeoutRef.current = setTimeout(async () => {
-      const opts = await geocodeLocation(val);
-      setDestOptions(opts);
-    }, 500);
-  };
-
-  const handleOriginSelect = (val: string) => {
-    const opt = originOptions.find(o => o.label === val);
-    if (opt) {
-      onSetOrigin({ lat: opt.lat, lng: opt.lng });
-      onLocateGPS({ lat: opt.lat, lng: opt.lng });
-    }
-  };
-
-  const handleDestSelect = (val: string) => {
-    const opt = destOptions.find(o => o.label === val);
-    if (opt) {
-      onSetDestination({ lat: opt.lat, lng: opt.lng });
-      onLocateGPS({ lat: opt.lat, lng: opt.lng });
-    }
-  };
-
-  const handleSwap = () => {
-    const tempText = originText;
-    setOriginText(destText);
-    setDestText(tempText);
-
-    const tempCoord = origin;
-    if (destination) onSetOrigin(destination);
-    else onSetOrigin(null as any); // Reset to null properly handled upstream usually, but here we just pass
-    
-    if (tempCoord) onSetDestination(tempCoord);
-  };
-
-  const handleGPS = useCallback(() => {
-    if (!navigator.geolocation) return;
-    navigator.geolocation.getCurrentPosition(
-      (pos) => {
-        const coord = { lat: pos.coords.latitude, lng: pos.coords.longitude };
-        // Check if within Surabaya bounds
-        if (coord.lat >= -7.35 && coord.lat <= -7.20 && coord.lng >= 112.60 && coord.lng <= 112.85) {
-          onSetOrigin(coord);
-          onLocateGPS(coord);
-        } else {
-          // Surabaya center fallback
-          const fallback = { lat: -7.2575, lng: 112.7521 };
-          onSetOrigin(fallback);
-          onLocateGPS(fallback);
+    const controller = new AbortController();
+    const timer = window.setTimeout(async () => {
+      setSearching(true);
+      try {
+        const res = await searchPlacesSurabaya(draftQuery, controller.signal);
+        if (!controller.signal.aborted) {
+          setSuggestions(res);
         }
-      },
-      () => {
-        const fallback = { lat: -7.2575, lng: 112.7521 };
-        onSetOrigin(fallback);
-        onLocateGPS(fallback);
+      } catch {
+        if (!controller.signal.aborted) setSuggestions([]);
+      } finally {
+        if (!controller.signal.aborted) setSearching(false);
       }
-    );
-  }, [onSetOrigin, onLocateGPS]);
+    }, 350);
+
+    return () => {
+      window.clearTimeout(timer);
+      controller.abort();
+    };
+  }, [draftQuery, activeField]);
+
+  if (hidden) return null;
+
+  const displayedOrigin =
+    activeField === 'origin' ? draftQuery : (origin?.label ?? '');
+  const displayedDest =
+    activeField === 'destination' ? draftQuery : (destination?.label ?? '');
+  const visibleSuggestions =
+    activeField && draftQuery.trim().length >= 2 ? suggestions : [];
+
+  const handleChooseSuggestion = (item: NominatimSearchResult) => {
+    const shortLabel =
+      item.name?.trim() ||
+      item.display_name.split(',').slice(0, 2).join(',').trim();
+    const point: PlacePoint = {
+      lat: parseFloat(item.lat),
+      lng: parseFloat(item.lon),
+      label: shortLabel,
+    };
+    if (activeField === 'origin') {
+      onSelectOrigin(point);
+    } else if (activeField === 'destination') {
+      onSelectDestination(point);
+    }
+    setSuggestions([]);
+    setDraftQuery('');
+    setActiveField(null);
+  };
 
   return (
-    <Paper
-      shadow="md"
-      radius="lg"
-      p="md"
-      style={{ width: '100%', background: '#fcfaf6', zIndex: 50 }}
+    <section
+      aria-label="Pencarian rute pejalan kaki"
+      className="hud-surface pointer-events-auto absolute top-16 left-3 z-25 w-[calc(100dvw-4.5rem)] max-w-86 rounded-2xl p-3 transition-all sm:top-4 sm:left-4 sm:w-86"
     >
-      <Stack gap="xs">
-        {weather && (
-          <Group gap={6} align="center" style={{ backgroundColor: 'var(--mantine-color-gray-0)', padding: '6px 10px', borderRadius: '8px' }}>
-            {weather.temp > 30 ? <IconSun size={16} color="var(--mantine-color-yellow-6)" /> : <IconCloud size={16} color="gray" />}
-            <Text size="xs" fw={500} c="dimmed">
-              Surabaya: {weather.temp}°C (Terasa {weather.apparent}°C)
-            </Text>
-          </Group>
-        )}
-
-        <Group gap={4} align="flex-end">
-          <Autocomplete
-            label={clickMode === 'origin' ? "📍 Memilih titik awal..." : "Titik Awal"}
-            size="sm"
-            placeholder="Cari lokasi..."
-            data={originOptions.map(o => o.label)}
-            value={originText}
-            onChange={onOriginInput}
-            onOptionSubmit={handleOriginSelect}
-            leftSection={<IconMapPin size={14} color={clickMode === 'origin' ? '#1a936f' : '#457b9d'} />}
-            style={{ flex: 1 }}
-            styles={{ input: { borderColor: clickMode === 'origin' ? '#1a936f' : undefined } }}
-          />
-          <ActionIcon mb={4} variant="light" color="teal" onClick={handleGPS} title="Gunakan lokasi saya">
-            <IconCurrentLocation size={18} />
-          </ActionIcon>
-        </Group>
-
-        <Group justify="center" gap={0} mt={-10} mb={-10} style={{ position: 'relative', zIndex: 2 }}>
-          <ActionIcon radius="xl" variant="default" size="sm" onClick={handleSwap}>
-            <IconArrowsVertical size={14} />
-          </ActionIcon>
-        </Group>
-
-        <Autocomplete
-          label={clickMode === 'destination' ? "🎯 Memilih tujuan..." : "Tujuan"}
-          size="sm"
-          placeholder="Cari lokasi..."
-          data={destOptions.map(o => o.label)}
-          value={destText}
-          onChange={onDestInput}
-          onOptionSubmit={handleDestSelect}
-          leftSection={<IconTarget size={14} color={clickMode === 'destination' ? '#1a936f' : '#e63946'} />}
-          styles={{ input: { borderColor: clickMode === 'destination' ? '#1a936f' : undefined } }}
-        />
-
-        <Select
-          size="xs"
-          label="Toleransi panas kamu hari ini?"
-          data={[
-            { value: 'low', label: 'Rendah (Sedang santai / Sama anak)' },
-            { value: 'medium', label: 'Sedang (Biasa saja)' },
-            { value: 'high', label: 'Tinggi (Buru-buru / Olahraga)' },
-          ]}
-          value={tolerance}
-          onChange={(v) => onToleranceChange((v || 'medium') as HeatTolerance)}
-        />
-
-        <Button
-          fullWidth
-          color="teal"
-          onClick={onSearch}
-          loading={loading}
-          disabled={!origin || !destination}
-          mt="xs"
+      <div className="flex items-center justify-between gap-2">
+        <button
+          type="button"
+          onClick={() => setCollapsed((v) => !v)}
+          className="flex flex-1 items-center gap-2 text-left"
         >
-          Cari Rute Ternyaman
-        </Button>
-      </Stack>
-    </Paper>
+          <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-xl bg-[#0E7C86]/10 text-[#0E7C86]">
+            <Search className="h-3.5 w-3.5" />
+          </span>
+          <div className="min-w-0 flex-1">
+            <h2 className="truncate text-xs font-bold text-slate-900">
+              Rute Jalan Kaki Teduh
+            </h2>
+            <p className="truncate text-[11px] text-slate-500">
+              {collapsed && origin && destination
+                ? `${origin.label} → ${destination.label}`
+                : 'Cari lokasi atau klik langsung di peta'}
+            </p>
+          </div>
+          {collapsed ? (
+            <ChevronDown className="h-4 w-4 shrink-0 text-slate-400" />
+          ) : (
+            <ChevronUp className="h-4 w-4 shrink-0 text-slate-400" />
+          )}
+        </button>
+
+        {(origin || destination) && !collapsed && (
+          <button
+            type="button"
+            onClick={() => {
+              setActiveField(null);
+              setDraftQuery('');
+              setSuggestions([]);
+              onClearAll();
+            }}
+            title="Bersihkan rute & titik"
+            aria-label="Bersihkan rute dan titik"
+            className="rounded-lg p-1.5 text-slate-400 transition-colors hover:bg-slate-100 hover:text-red-600"
+          >
+            <Trash2 className="h-3.5 w-3.5" />
+          </button>
+        )}
+      </div>
+
+      {!collapsed && (
+        <div className="mt-3 space-y-2.5">
+          <div className="relative space-y-2">
+            {/* Origin Row */}
+            <div className="flex items-center gap-1.5">
+              <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-[#0E7C86] font-mono text-[10px] font-bold text-white">
+                A
+              </span>
+              <div className="relative flex-1">
+                <input
+                  type="text"
+                  value={displayedOrigin}
+                  onFocus={() => {
+                    setActiveField('origin');
+                    setDraftQuery(origin?.label ?? '');
+                    setSuggestions([]);
+                  }}
+                  onChange={(e) => {
+                    setActiveField('origin');
+                    setDraftQuery(e.target.value);
+                  }}
+                  placeholder="Titik keberangkatan..."
+                  className="w-full rounded-xl border border-slate-200 bg-slate-50/80 py-1.5 pr-14 pl-2.5 text-xs text-slate-900 placeholder:text-slate-400 focus:border-[#0E7C86] focus:bg-white focus:outline-none"
+                />
+                <div className="absolute inset-y-0 right-1 flex items-center gap-0.5">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setActiveField(null);
+                      onUseMyGpsForOrigin();
+                    }}
+                    title="Gunakan lokasi GPS saat ini"
+                    aria-label="Gunakan lokasi GPS untuk titik asal"
+                    className="rounded-md p-1 text-slate-500 hover:bg-slate-100 hover:text-[#0E7C86]"
+                  >
+                    <LocateFixed className="h-3.5 w-3.5" />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setActiveField(null);
+                      onPickTargetChange(
+                        pickTarget === 'origin' ? null : 'origin'
+                      );
+                    }}
+                    title="Klik titik keberangkatan di peta"
+                    aria-label="Pilih titik keberangkatan di peta"
+                    className={`rounded-md p-1 transition-colors ${
+                      pickTarget === 'origin'
+                        ? 'bg-[#0E7C86] text-white'
+                        : 'text-slate-500 hover:bg-slate-100 hover:text-slate-900'
+                    }`}
+                  >
+                    <Crosshair className="h-3.5 w-3.5" />
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            {/* Destination Row */}
+            <div className="flex items-center gap-1.5">
+              <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-[#B42318] font-mono text-[10px] font-bold text-white">
+                B
+              </span>
+              <div className="relative flex-1">
+                <input
+                  type="text"
+                  value={displayedDest}
+                  onFocus={() => {
+                    setActiveField('destination');
+                    setDraftQuery(destination?.label ?? '');
+                    setSuggestions([]);
+                  }}
+                  onChange={(e) => {
+                    setActiveField('destination');
+                    setDraftQuery(e.target.value);
+                  }}
+                  placeholder="Tujuan di Surabaya..."
+                  className="w-full rounded-xl border border-slate-200 bg-slate-50/80 py-1.5 pr-14 pl-2.5 text-xs text-slate-900 placeholder:text-slate-400 focus:border-[#0E7C86] focus:bg-white focus:outline-none"
+                />
+                <div className="absolute inset-y-0 right-1 flex items-center gap-0.5">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setActiveField(null);
+                      onSwapPoints();
+                    }}
+                    disabled={!origin && !destination}
+                    title="Tukar titik A dan B"
+                    aria-label="Tukar titik asal dan tujuan"
+                    className="rounded-md p-1 text-slate-500 hover:bg-slate-100 hover:text-slate-900 disabled:opacity-35"
+                  >
+                    <ArrowUpDown className="h-3.5 w-3.5" />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setActiveField(null);
+                      onPickTargetChange(
+                        pickTarget === 'destination' ? null : 'destination'
+                      );
+                    }}
+                    title="Klik titik tujuan di peta"
+                    aria-label="Pilih titik tujuan di peta"
+                    className={`rounded-md p-1 transition-colors ${
+                      pickTarget === 'destination'
+                        ? 'bg-[#B42318] text-white'
+                        : 'text-slate-500 hover:bg-slate-100 hover:text-slate-900'
+                    }`}
+                  >
+                    <Crosshair className="h-3.5 w-3.5" />
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            {(pickTarget === 'origin' || pickTarget === 'destination') && (
+              <div className="flex items-center justify-between rounded-xl bg-teal-50 px-2.5 py-1.5 text-[11px] font-medium text-teal-900 ring-1 ring-teal-200">
+                <span>
+                  Klik di peta 3D untuk memilih{' '}
+                  <strong>
+                    {pickTarget === 'origin' ? 'Titik A' : 'Tujuan B'}
+                  </strong>
+                </span>
+                <button
+                  type="button"
+                  onClick={() => onPickTargetChange(null)}
+                  className="font-semibold text-teal-700 underline"
+                >
+                  Batal
+                </button>
+              </div>
+            )}
+
+            {(searching || visibleSuggestions.length > 0) && activeField && (
+              <div className="max-h-48 overflow-y-auto rounded-xl border border-slate-200 bg-white p-1 shadow-lg">
+                {searching && (
+                  <div className="flex items-center gap-2 px-2.5 py-2 text-xs text-slate-500">
+                    <Loader2 className="h-3.5 w-3.5 animate-spin text-[#0E7C86]" />
+                    <span>Mencari lokasi di Surabaya...</span>
+                  </div>
+                )}
+                {!searching &&
+                  visibleSuggestions.map((item) => (
+                    <button
+                      key={item.place_id}
+                      type="button"
+                      onClick={() => handleChooseSuggestion(item)}
+                      className="flex w-full items-start gap-2 rounded-lg px-2.5 py-1.5 text-left text-xs transition-colors hover:bg-slate-100"
+                    >
+                      <MapPin className="mt-0.5 h-3.5 w-3.5 shrink-0 text-[#0E7C86]" />
+                      <span className="line-clamp-2 text-slate-700">
+                        {item.display_name}
+                      </span>
+                    </button>
+                  ))}
+              </div>
+            )}
+          </div>
+
+          {/* Heat Tolerance / Heat Budget Selector */}
+          <div>
+            <div className="mb-1 flex items-center justify-between text-[11px]">
+              <span className="font-semibold text-slate-600">
+                Toleransi Paparan Panas
+              </span>
+              <span className="text-[10px] text-slate-400">Heat Budget</span>
+            </div>
+            <div className="grid grid-cols-3 gap-1 rounded-xl bg-slate-100 p-1">
+              {TOLERANCE_OPTIONS.map((opt) => {
+                const selected = tolerance === opt.value;
+                return (
+                  <button
+                    key={opt.value}
+                    type="button"
+                    onClick={() => onToleranceChange(opt.value)}
+                    className={`flex flex-col items-center rounded-lg py-1 text-center transition-all ${
+                      selected
+                        ? 'bg-white text-slate-900 shadow-xs ring-1 ring-slate-200/80'
+                        : 'text-slate-500 hover:text-slate-800'
+                    }`}
+                  >
+                    <span className="text-[11px] font-bold">{opt.title}</span>
+                    <span className="font-mono text-[9px] text-slate-500 tabular-nums">
+                      {opt.budget}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
+          {errorMessage && (
+            <div className="rounded-xl border border-red-200 bg-red-50 px-2.5 py-2 text-[11px] leading-snug font-medium text-red-800">
+              {errorMessage}
+            </div>
+          )}
+
+          <button
+            type="button"
+            disabled={!origin || !destination || loadingRoute}
+            onClick={onSubmitRoute}
+            className="flex w-full items-center justify-center gap-2 rounded-xl bg-[#0E7C86] px-3 py-2 text-xs font-bold text-white shadow-sm transition-colors hover:bg-[#0A5E66] disabled:cursor-not-allowed disabled:bg-slate-200 disabled:text-slate-400"
+          >
+            {loadingRoute ? (
+              <>
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                <span>Menghitung rute pgRouting...</span>
+              </>
+            ) : (
+              <>
+                <Navigation className="h-3.5 w-3.5" />
+                <span>Cari Rute Terbaik</span>
+              </>
+            )}
+          </button>
+        </div>
+      )}
+    </section>
   );
-}
+};

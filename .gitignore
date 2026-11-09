@@ -81,3 +81,11 @@ supabase/.temp/
 
 # Local reference documents (not part of the codebase)
 *.pdf
+# --- Backup directories ---
+frontend_vite_backup/
+
+# --- Personal / Internal SSOT Documentation ---
+docs_me/
+
+# --- UI Design Reference Prototype (Excluded from Production Repo) ---
+design-reference/

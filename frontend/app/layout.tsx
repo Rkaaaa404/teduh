@@ -1,15 +1,26 @@
-import '@mantine/core/styles.css';
-import '@mantine/notifications/styles.css';
+import type { Metadata } from 'next';
+import { Plus_Jakarta_Sans, JetBrains_Mono } from 'next/font/google';
 import 'maplibre-gl/dist/maplibre-gl.css';
 import './globals.css';
 
-import { MantineProvider, ColorSchemeScript } from '@mantine/core';
-import { Notifications } from '@mantine/notifications';
-import Navbar from '@/components/Navbar';
+const jakartaSans = Plus_Jakarta_Sans({
+  subsets: ['latin'],
+  variable: '--font-jakarta',
+  display: 'swap',
+  weight: ['400', '500', '600', '700', '800'],
+});
 
-export const metadata = {
-  title: 'Teduh',
-  description: 'Sistem Navigasi Pejalan Kaki Berbasis Kenyamanan Termal',
+const jetbrainsMono = JetBrains_Mono({
+  subsets: ['latin'],
+  variable: '--font-jetbrains',
+  display: 'swap',
+  weight: ['500', '600', '700'],
+});
+
+export const metadata: Metadata = {
+  title: 'TEDUH Surabaya — Navigasi Pejalan Kaki & Analitik Kenyamanan Termal',
+  description:
+    'Platform peta kota 3D dan navigasi pejalan kaki berbasis Thermal Comfort Score (TCS), bayangan bangunan, CCTV Dishub, dan analitik iklim mikro Kota Surabaya.',
 };
 
 export default function RootLayout({
@@ -18,20 +29,25 @@ export default function RootLayout({
   children: React.ReactNode;
 }) {
   return (
-    <html lang="id" suppressHydrationWarning>
+    <html
+      lang="id"
+      className={`${jakartaSans.variable} ${jetbrainsMono.variable}`}
+      suppressHydrationWarning
+    >
       <head>
-        <ColorSchemeScript />
+        <link
+          rel="preconnect"
+          href="https://tiles.openfreemap.org"
+          crossOrigin=""
+        />
+        <link
+          rel="preconnect"
+          href="https://api.open-meteo.com"
+          crossOrigin=""
+        />
       </head>
-      <body>
-        <MantineProvider defaultColorScheme="light">
-          <Notifications position="top-right" />
-          <div style={{ height: '100vh', display: 'flex', flexDirection: 'column' }}>
-            <Navbar />
-            <main style={{ flex: 1, position: 'relative', overflow: 'hidden' }}>
-              {children}
-            </main>
-          </div>
-        </MantineProvider>
+      <body className="h-dvh w-dvw overflow-hidden bg-[#F4F2EC] text-slate-900 antialiased selection:bg-teal-600 selection:text-white">
+        {children}
       </body>
     </html>
   );

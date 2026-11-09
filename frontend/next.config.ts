@@ -1,8 +1,13 @@
-import type { NextConfig } from "next";
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import type { NextConfig } from 'next';
+
+const currentDir = path.dirname(fileURLToPath(import.meta.url));
 
 const nextConfig: NextConfig = {
-  // Dishub CCTV streams are served over plain HTTP, which browsers block on an
-  // HTTPS page (mixed content). Proxy them through our own origin instead.
+  turbopack: {
+    root: currentDir,
+  },
   async rewrites() {
     return [
       {
