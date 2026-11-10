@@ -3,10 +3,12 @@ import { fileURLToPath } from 'node:url';
 import type { NextConfig } from 'next';
 
 const currentDir = path.dirname(fileURLToPath(import.meta.url));
+const repoRoot = path.resolve(currentDir, '..');
 
 const nextConfig: NextConfig = {
+  outputFileTracingRoot: repoRoot,
   turbopack: {
-    root: currentDir,
+    root: repoRoot,
   },
   async rewrites() {
     return [

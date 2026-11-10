@@ -1,20 +1,20 @@
 import type { Metadata } from 'next';
-import { Plus_Jakarta_Sans, JetBrains_Mono } from 'next/font/google';
+import localFont from 'next/font/local';
 import 'maplibre-gl/dist/maplibre-gl.css';
 import './globals.css';
 
-const jakartaSans = Plus_Jakarta_Sans({
-  subsets: ['latin'],
+const jakartaSans = localFont({
+  src: './fonts/plus-jakarta-sans-latin.woff2',
   variable: '--font-jakarta',
   display: 'optional',
-  weight: ['400', '500', '600', '700', '800'],
+  weight: '400 800',
 });
 
-const jetbrainsMono = JetBrains_Mono({
-  subsets: ['latin'],
+const jetbrainsMono = localFont({
+  src: './fonts/jetbrains-mono-latin.woff2',
   variable: '--font-jetbrains',
   display: 'optional',
-  weight: ['500', '600', '700'],
+  weight: '500 700',
 });
 
 export const metadata: Metadata = {

@@ -73,6 +73,10 @@ curl -H "X-Admin-Token: <random-string>" "$API_URL/api/debug/topology-status"
 2. Environment variable: `NEXT_PUBLIC_API_URL` = `<ApiUrl>api` (e.g. `https://abc123.lambda-url.ap-southeast-1.on.aws/api`).
 3. Deploy, and note the domain (e.g. `https://teduh-app.vercel.app`).
 
+Production-build check: `npm run build --prefix frontend`.
+Plus Jakarta Sans (400–800) and JetBrains Mono (500–700) are bundled as Latin variable WOFF2 fonts in `frontend/app/fonts/`, with their SIL Open Font Licenses. `next/font/local` serves them without fetching Google Fonts during builds, avoiding the Next.js Google-font URL parsing failure (`next/font/google queries have exactly one entry`). Preserve the font files and licenses when deploying.
+`outputFileTracingRoot` and `turbopack.root` both point to the repository root in `frontend/next.config.ts`, matching Vercel's monorepo build root.
+
 ### 6. Lock CORS to the Vercel domain
 ```bash
 sam deploy --parameter-overrides \
