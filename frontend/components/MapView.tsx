@@ -6,6 +6,7 @@ import React, {
   useEffect,
   useImperativeHandle,
   useRef,
+  useState,
 } from 'react';
 import maplibregl, {
   type GeoJSONSource,
@@ -28,13 +29,18 @@ import {
 import {
   applySurabaya3DUrbanStyle,
   configureAtmosphereAndSky,
+  ensureRouteLayers,
   F4MAP_PALETTE,
   OPENFREEMAP_LIBERTY_STYLE,
   syncEcoModeLayers,
   syncMapLayerMode,
   updateMapSunLighting,
 } from '@/components/map/mapStyleSurabaya3D';
-import { SURABAYA_CENTER } from '@/utils/geoMath';
+import {
+  computeInitialRouteBearing,
+  routesAreIdentical,
+  SURABAYA_CENTER,
+} from '@/utils/geoMath';
 
 export type MapPickTarget = 'origin' | 'destination' | 'incident' | null;
 
@@ -47,8 +53,10 @@ interface MapViewProps {
   origin: PlacePoint | null;
   destination: PlacePoint | null;
   userLocation: Coordinate | null;
+  navPosition?: Coordinate | null;
   routeData: RouteResponse | null;
   selectedRouteType: RoutePreferenceType;
+  previewRouteType?: RoutePreferenceType | null;
   cctvCameras: CCTVCamera[];
   activeAlerts: MapAlert[];
   layerMode: MapLayerMode;
@@ -86,8 +94,10 @@ export const MapView = forwardRef<MapViewHandle, MapViewProps>(function MapView(
     origin,
     destination,
     userLocation,
+    navPosition,
     routeData,
     selectedRouteType,
+    previewRouteType = null,
     cctvCameras,
     activeAlerts,
     layerMode,
@@ -106,8 +116,10 @@ export const MapView = forwardRef<MapViewHandle, MapViewProps>(function MapView(
   const containerRef = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<MapLibreMap | null>(null);
   const styleReadyRef = useRef<boolean>(false);
+  const [styleReady, setStyleReady] = useState<boolean>(false);
   const uhiLoadedRef = useRef<boolean>(false);
   const lastFetchKeyRef = useRef<string>('');
+  const lastFittedRouteKeyRef = useRef<string>('');
 
   const originMarkerRef = useRef<Marker | null>(null);
   const destMarkerRef = useRef<Marker | null>(null);
@@ -116,13 +128,34 @@ export const MapView = forwardRef<MapViewHandle, MapViewProps>(function MapView(
   const alertMarkersRef = useRef<Marker[]>([]);
 
   const pickCallbackRef = useRef(onMapCoordinatePick);
+  const onMapReadyRef = useRef(onMapReady);
+  const onSegmentMetaChangeRef = useRef(onSegmentMetaChange);
+  const onSelectCCTVRef = useRef(onSelectCCTV);
+  const onSelectAlertRef = useRef(onSelectAlert);
   const layerModeRef = useRef(layerMode);
   const solarHourRef = useRef(solarHour);
   const ecoModeRef = useRef(ecoMode);
+  const prevEcoModeRef = useRef(ecoMode);
 
   useEffect(() => {
     pickCallbackRef.current = onMapCoordinatePick;
   }, [onMapCoordinatePick]);
+
+  useEffect(() => {
+    onMapReadyRef.current = onMapReady;
+  }, [onMapReady]);
+
+  useEffect(() => {
+    onSegmentMetaChangeRef.current = onSegmentMetaChange;
+  }, [onSegmentMetaChange]);
+
+  useEffect(() => {
+    onSelectCCTVRef.current = onSelectCCTV;
+  }, [onSelectCCTV]);
+
+  useEffect(() => {
+    onSelectAlertRef.current = onSelectAlert;
+  }, [onSelectAlert]);
 
   useEffect(() => {
     layerModeRef.current = layerMode;
@@ -168,7 +201,7 @@ export const MapView = forwardRef<MapViewHandle, MapViewProps>(function MapView(
         return;
       }
 
-      onSegmentMetaChange?.(0, true);
+      onSegmentMetaChangeRef.current?.(0, true);
       try {
         const segments = await fetchThermalSegments(
           {
@@ -200,17 +233,22 @@ export const MapView = forwardRef<MapViewHandle, MapViewProps>(function MapView(
             })),
           });
         }
-        onSegmentMetaChange?.(segments.length, false);
+        onSegmentMetaChangeRef.current?.(segments.length, false);
       } catch {
         if (!signal?.aborted) {
-          onSegmentMetaChange?.(0, false);
+          onSegmentMetaChangeRef.current?.(0, false);
         }
       }
     },
-    [onSegmentMetaChange]
+    []
   );
 
-  // Initialize MapLibre Instance Once with Adaptive High-DPI Cap
+  const loadViewportRef = useRef(loadViewportSegments);
+  useEffect(() => {
+    loadViewportRef.current = loadViewportSegments;
+  }, [loadViewportSegments]);
+
+  // Initialize MapLibre Instance strictly once — callbacks are accessed via stable refs
   useEffect(() => {
     if (!containerRef.current || mapRef.current) return;
 
@@ -243,7 +281,7 @@ export const MapView = forwardRef<MapViewHandle, MapViewProps>(function MapView(
       moveDebounceTimer = window.setTimeout(() => {
         activeAbort?.abort();
         activeAbort = new AbortController();
-        void loadViewportSegments(map, activeAbort.signal);
+        void loadViewportRef.current(map, activeAbort.signal);
       }, 320);
     };
 
@@ -257,7 +295,8 @@ export const MapView = forwardRef<MapViewHandle, MapViewProps>(function MapView(
       if (ecoModeRef.current) {
         syncEcoModeLayers(map, true, solarHourRef.current);
       }
-      onMapReady?.(map);
+      setStyleReady(true);
+      onMapReadyRef.current?.(map);
       scheduleViewportFetch();
     });
 
@@ -277,10 +316,13 @@ export const MapView = forwardRef<MapViewHandle, MapViewProps>(function MapView(
       map.remove();
       mapRef.current = null;
     };
-  }, [loadViewportSegments, onMapReady]);
+  }, []);
 
-  // Sync Eco Mode (GPU Pixel Ratio + 3D Extrusion Toggle + Camera Pitch)
+  // Sync Eco Mode only when `ecoMode` actually toggles after mount
   useEffect(() => {
+    if (prevEcoModeRef.current === ecoMode) return;
+    prevEcoModeRef.current = ecoMode;
+
     const map = mapRef.current;
     if (!map) return;
 
@@ -297,9 +339,9 @@ export const MapView = forwardRef<MapViewHandle, MapViewProps>(function MapView(
         pitch: ecoMode ? 0 : Math.max(map.getPitch(), 52),
         duration: 450,
       });
-      void loadViewportSegments(map);
+      void loadViewportRef.current(map);
     }
-  }, [ecoMode, loadViewportSegments]);
+  }, [ecoMode]);
 
   // Cursor style when picking point on map
   useEffect(() => {
@@ -321,7 +363,7 @@ export const MapView = forwardRef<MapViewHandle, MapViewProps>(function MapView(
   // Sync Layer Mode & Lazy-load UHI Heatmap GeoJSON when needed
   useEffect(() => {
     const map = mapRef.current;
-    if (!map || !styleReadyRef.current) return;
+    if (!map || !styleReady) return;
     syncMapLayerMode(map, layerMode);
 
     if (layerMode === 'uhi' && !uhiLoadedRef.current) {
@@ -341,12 +383,14 @@ export const MapView = forwardRef<MapViewHandle, MapViewProps>(function MapView(
         });
       return () => ctrl.abort();
     }
-  }, [layerMode]);
+  }, [layerMode, styleReady]);
 
   // Sync Active & Alternative Route Ribbons + Auto Fit Bounds
   useEffect(() => {
     const map = mapRef.current;
-    if (!map || !styleReadyRef.current) return;
+    if (!map || !styleReady) return;
+
+    ensureRouteLayers(map);
 
     const activeSrc = map.getSource('teduh-route-active') as
       | GeoJSONSource
@@ -359,10 +403,13 @@ export const MapView = forwardRef<MapViewHandle, MapViewProps>(function MapView(
     if (!routeData || routeData.routes.length === 0) {
       activeSrc.setData({ type: 'FeatureCollection', features: [] });
       altSrc.setData({ type: 'FeatureCollection', features: [] });
+      lastFittedRouteKeyRef.current = '';
       return;
     }
 
+    const displayedType = previewRouteType ?? selectedRouteType;
     const selected =
+      routeData.routes.find((r) => r.type === displayedType) ??
       routeData.routes.find((r) => r.type === selectedRouteType) ??
       routeData.routes[0];
     const alt = routeData.routes.find((r) => r !== selected);
@@ -371,6 +418,12 @@ export const MapView = forwardRef<MapViewHandle, MapViewProps>(function MapView(
       selected.type === 'most_comfortable'
         ? F4MAP_PALETTE.routeComfortable
         : F4MAP_PALETTE.routeShortest;
+    const altColor =
+      alt?.type === 'most_comfortable'
+        ? F4MAP_PALETTE.routeComfortable
+        : F4MAP_PALETTE.routeShortest;
+
+    const isIdentical = routesAreIdentical(selected.geometry, alt?.geometry);
 
     activeSrc.setData({
       type: 'FeatureCollection',
@@ -389,42 +442,90 @@ export const MapView = forwardRef<MapViewHandle, MapViewProps>(function MapView(
     altSrc.setData({
       type: 'FeatureCollection',
       features:
-        alt && alt.geometry.coordinates.length > 0
+        alt && alt.geometry.coordinates.length > 0 && !isIdentical
           ? [
               {
                 type: 'Feature',
                 geometry: alt.geometry,
-                properties: {},
+                properties: { color: altColor },
               },
             ]
           : [],
     });
 
-    if (selected.geometry.coordinates.length >= 2 && !isNavigating) {
+    // Auto fit bounds when routeData or committed selectedRouteType changes (not on hover preview)
+    const firstCoord = selected.geometry.coordinates[0];
+    const lastCoord =
+      selected.geometry.coordinates[selected.geometry.coordinates.length - 1];
+    const fitKey = firstCoord && lastCoord
+      ? `${firstCoord[0].toFixed(5)},${firstCoord[1].toFixed(5)}->${lastCoord[0].toFixed(5)},${lastCoord[1].toFixed(5)}:${selectedRouteType}`
+      : '';
+
+    if (
+      selected.geometry.coordinates.length >= 2 &&
+      !isNavigating &&
+      !previewRouteType &&
+      fitKey !== lastFittedRouteKeyRef.current
+    ) {
+      lastFittedRouteKeyRef.current = fitKey;
       const bounds = new maplibregl.LngLatBounds();
       for (const [lng, lat] of selected.geometry.coordinates) {
         bounds.extend([lng, lat]);
       }
+      if (alt && alt.geometry.coordinates.length >= 2) {
+        for (const [lng, lat] of alt.geometry.coordinates) {
+          bounds.extend([lng, lat]);
+        }
+      }
+      const isMobile =
+        typeof window !== 'undefined' && window.innerWidth < 640;
       map.fitBounds(bounds, {
-        padding: { top: 96, bottom: 140, left: 380, right: 96 },
+        padding: isMobile
+          ? { top: 88, bottom: 220, left: 40, right: 40 }
+          : { top: 96, bottom: 140, left: 396, right: 96 },
         pitch: ecoModeRef.current ? 0 : 52,
         maxZoom: 16.8,
         duration: 850,
       });
     }
-  }, [routeData, selectedRouteType, isNavigating]);
+  }, [
+    routeData,
+    selectedRouteType,
+    previewRouteType,
+    isNavigating,
+    styleReady,
+  ]);
 
-  // Follow user GPS smoothly during active walking navigation
+  // Follow active navigation anchor (always starting at current Origin A unless verified on-route GPS)
   useEffect(() => {
     const map = mapRef.current;
-    if (!map || !isNavigating || !userLocation) return;
+    const targetPos = navPosition ?? origin;
+    if (!map || !isNavigating || !targetPos) return;
+
+    const chosenRoute =
+      routeData?.routes.find((r) => r.type === selectedRouteType) ??
+      routeData?.routes[0];
+    const heading = computeInitialRouteBearing(
+      chosenRoute?.geometry,
+      origin,
+      destination
+    );
+
     map.easeTo({
-      center: [userLocation.lng, userLocation.lat],
-      zoom: Math.max(map.getZoom(), 17.2),
-      pitch: ecoModeRef.current ? 0 : 60,
-      duration: 600,
+      center: [targetPos.lng, targetPos.lat],
+      zoom: Math.max(map.getZoom(), 17.4),
+      pitch: ecoModeRef.current ? 0 : 62,
+      bearing: ecoModeRef.current ? 0 : heading,
+      duration: 850,
     });
-  }, [isNavigating, userLocation]);
+  }, [
+    isNavigating,
+    navPosition,
+    origin,
+    destination,
+    routeData,
+    selectedRouteType,
+  ]);
 
   // Origin Marker (A)
   useEffect(() => {
@@ -509,14 +610,14 @@ export const MapView = forwardRef<MapViewHandle, MapViewProps>(function MapView(
       btn.innerHTML = `<span style="width:6px;height:6px;border-radius:9999px;background:#22c55e;display:inline-block"></span><span>CCTV</span>`;
       btn.addEventListener('click', (ev) => {
         ev.stopPropagation();
-        onSelectCCTV(cam);
+        onSelectCCTVRef.current(cam);
       });
 
       return new maplibregl.Marker({ element: btn, anchor: 'bottom' })
         .setLngLat([cam.lng, cam.lat])
         .addTo(map);
     });
-  }, [cctvCameras, onSelectCCTV]);
+  }, [cctvCameras]);
 
   // Active TEDUH-Eye Community Map Alert Markers
   useEffect(() => {
@@ -538,20 +639,21 @@ export const MapView = forwardRef<MapViewHandle, MapViewProps>(function MapView(
       btn.textContent = '!';
       btn.addEventListener('click', (ev) => {
         ev.stopPropagation();
-        onSelectAlert(alert);
+        onSelectAlertRef.current(alert);
       });
 
       return new maplibregl.Marker({ element: btn, anchor: 'center' })
         .setLngLat([alert.lon, alert.lat])
         .addTo(map);
     });
-  }, [activeAlerts, onSelectAlert]);
+  }, [activeAlerts]);
 
   return (
     <div
       ref={containerRef}
+      suppressHydrationWarning
       className="relative h-full w-full select-none"
-      aria-label="Kanvas Peta Kota Surabaya"
+      aria-label="Kanvas Peta Kota Surabaya 3D"
     />
   );
 });

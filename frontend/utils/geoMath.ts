@@ -274,3 +274,146 @@ export function formatDataAsOf(iso: string | null | undefined): string | null {
     timeStyle: 'short',
   });
 }
+
+/**
+ * Memproyeksikan titik P ke segmen garis A-B pada bidang ekuirektangular lokal (meter)
+ * dan mengembalikan jarak terdekat (meter) serta fraksi posisi t pada segmen [0, 1].
+ */
+function projectPointToSegmentMeters(
+  p: Coordinate,
+  a: Coordinate,
+  b: Coordinate
+): { distanceM: number; t: number; segLenM: number } {
+  const cosLat = Math.cos(toRad((a.lat + b.lat) / 2));
+  const dx = toRad(b.lng - a.lng) * cosLat * EARTH_RADIUS_M;
+  const dy = toRad(b.lat - a.lat) * EARTH_RADIUS_M;
+  const px = toRad(p.lng - a.lng) * cosLat * EARTH_RADIUS_M;
+  const py = toRad(p.lat - a.lat) * EARTH_RADIUS_M;
+
+  const segLenSq = dx * dx + dy * dy;
+  const segLenM = Math.sqrt(segLenSq);
+  if (segLenSq < 1e-6) {
+    return {
+      distanceM: Math.sqrt(px * px + py * py),
+      t: 0,
+      segLenM: 0,
+    };
+  }
+
+  const t = Math.max(0, Math.min(1, (px * dx + py * dy) / segLenSq));
+  const projX = t * dx;
+  const projY = t * dy;
+  const distM = Math.sqrt((px - projX) ** 2 + (py - projY) ** 2);
+  return { distanceM: distM, t, segLenM };
+}
+
+/**
+ * Menghitung jarak terdekat (meter) dari koordinat ke garis rute LineString,
+ * serta sisa jarak tempuh sepanjang polyline dari titik proyeksi hingga ujung tujuan.
+ */
+export function projectOnPolyline(
+  point: Coordinate,
+  geometry?: GeoJSON.LineString | null,
+  fallbackTotalMeters = 0
+): { distanceFromRouteMeters: number; remainingRouteMeters: number } {
+  const coords = geometry?.coordinates;
+  if (!coords || coords.length === 0) {
+    return {
+      distanceFromRouteMeters: Infinity,
+      remainingRouteMeters: fallbackTotalMeters,
+    };
+  }
+  if (coords.length === 1) {
+    const only: Coordinate = { lng: coords[0][0], lat: coords[0][1] };
+    const d = haversineDistanceMeters(point, only);
+    return {
+      distanceFromRouteMeters: d,
+      remainingRouteMeters: fallbackTotalMeters,
+    };
+  }
+
+  const segLengths: number[] = [];
+  let minDistance = Infinity;
+  let bestSegIdx = 0;
+  let bestT = 0;
+
+  for (let i = 0; i < coords.length - 1; i++) {
+    const a: Coordinate = { lng: coords[i][0], lat: coords[i][1] };
+    const b: Coordinate = { lng: coords[i + 1][0], lat: coords[i + 1][1] };
+    const { distanceM, t, segLenM } = projectPointToSegmentMeters(point, a, b);
+    segLengths.push(segLenM);
+    if (distanceM < minDistance) {
+      minDistance = distanceM;
+      bestSegIdx = i;
+      bestT = t;
+    }
+  }
+
+  let remaining = (1 - bestT) * (segLengths[bestSegIdx] ?? 0);
+  for (let i = bestSegIdx + 1; i < segLengths.length; i++) {
+    remaining += segLengths[i];
+  }
+
+  return {
+    distanceFromRouteMeters: minDistance,
+    remainingRouteMeters: Math.max(0, remaining),
+  };
+}
+
+/**
+ * Menghitung jarak minimum (meter) dari sebuah koordinat ke polyline rute.
+ */
+export function distanceToPolylineMeters(
+  point: Coordinate,
+  geometry?: GeoJSON.LineString | null
+): number {
+  return projectOnPolyline(point, geometry, 0).distanceFromRouteMeters;
+}
+
+/**
+ * Memeriksa apakah dua geometri rute LineString identik (koordinat sama persis).
+ */
+export function routesAreIdentical(
+  a?: GeoJSON.LineString | null,
+  b?: GeoJSON.LineString | null
+): boolean {
+  const ca = a?.coordinates;
+  const cb = b?.coordinates;
+  if (!ca || !cb || ca.length === 0 || cb.length === 0) return false;
+  if (ca.length !== cb.length) return false;
+  for (let i = 0; i < ca.length; i++) {
+    if (
+      Math.abs(ca[i][0] - cb[i][0]) > 1e-6 ||
+      Math.abs(ca[i][1] - cb[i][1]) > 1e-6
+    ) {
+      return false;
+    }
+  }
+  return true;
+}
+
+/**
+ * Menghitung sudut arah (bearing) segmen awal rute agar kamera navigasi 3D
+ * langsung menghadap searah jalan saat pengguna menekan "Mulai Navigasi".
+ */
+export function computeInitialRouteBearing(
+  geometry?: GeoJSON.LineString | null,
+  fallbackFrom?: Coordinate | null,
+  fallbackTo?: Coordinate | null
+): number {
+  const coords = geometry?.coordinates;
+  if (coords && coords.length >= 2) {
+    const start: Coordinate = { lng: coords[0][0], lat: coords[0][1] };
+    for (let i = 1; i < coords.length; i++) {
+      const next: Coordinate = { lng: coords[i][0], lat: coords[i][1] };
+      if (haversineDistanceMeters(start, next) >= 4) {
+        return computeBearingDegrees(start, next);
+      }
+    }
+  }
+  if (fallbackFrom && fallbackTo) {
+    return computeBearingDegrees(fallbackFrom, fallbackTo);
+  }
+  return -12;
+}
+

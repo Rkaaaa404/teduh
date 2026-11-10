@@ -30,7 +30,7 @@ export function applySurabaya3DUrbanStyle(
   solarHour: number,
   mode: MapLayerMode
 ): void {
-  if (!map || !map.isStyleLoaded()) return;
+  if (!map || !map.getStyle()) return;
 
   configureAtmosphereAndSky(map, solarHour);
   restyleLandAndHydrology(map, solarHour);
@@ -91,7 +91,7 @@ export function updateMapSunLighting(
   map: MapLibreMap,
   solarHour: number
 ): void {
-  if (!map || !map.isStyleLoaded()) return;
+  if (!map || !map.getStyle()) return;
 
   const { azimuthDeg, zenithDeg, isNight, isGoldenHour } =
     calculateSurabayaSolarPosition(solarHour);
@@ -214,8 +214,28 @@ function restyleLandAndHydrology(map: MapLibreMap, solarHour: number): void {
 function findFirstSymbolLayerId(map: MapLibreMap): string | undefined {
   const layers = map.getStyle()?.layers;
   if (!layers) return undefined;
+  let passedBuilding = false;
   for (const l of layers) {
-    if (l.type === 'symbol') return l.id;
+    if (l.id.includes('building')) {
+      passedBuilding = true;
+    }
+    if (
+      l.type === 'symbol' &&
+      passedBuilding &&
+      !l.id.includes('one_way') &&
+      !l.id.includes('arrow')
+    ) {
+      return l.id;
+    }
+  }
+  for (const l of layers) {
+    if (
+      l.type === 'symbol' &&
+      !l.id.includes('one_way') &&
+      !l.id.includes('arrow')
+    ) {
+      return l.id;
+    }
   }
   return undefined;
 }
@@ -585,53 +605,88 @@ export function initializeFactualDataLayers(map: MapLibreMap): void {
           'circle-opacity': 0.9,
         },
       },
-      beforeSymbol
+      beforeBuildings
     );
   }
 
-  // 3. Layer Rute Alternatif (Dashed Comparison Ribbon)
-  if (!map.getSource('teduh-route-alt')) {
-    map.addSource('teduh-route-alt', {
-      type: 'geojson',
-      data: { type: 'FeatureCollection', features: [] },
-    });
+  ensureRouteLayers(map);
+}
 
-    map.addLayer(
-      {
-        id: 'teduh-route-alt-line',
+/**
+ * Memastikan source & layer pita rute (Aktif + Alternatif) selalu ada
+ * dan berada di urutan paling atas di atas layer jalan, UHI heatmap, TCS, serta gedung 3D.
+ */
+export function ensureRouteLayers(map: MapLibreMap): void {
+  if (!map || !map.getStyle()) return;
+
+  try {
+    // 1. Layer Rute Alternatif (Dashed Comparison Ribbon + Subtle Halo)
+    if (!map.getSource('teduh-route-alt')) {
+      map.addSource('teduh-route-alt', {
+        type: 'geojson',
+        data: { type: 'FeatureCollection', features: [] },
+      });
+    }
+
+    if (!map.getLayer('teduh-route-alt-casing')) {
+      map.addLayer({
+        id: 'teduh-route-alt-casing',
         type: 'line',
         source: 'teduh-route-alt',
         layout: { 'line-cap': 'round', 'line-join': 'round' },
         paint: {
-          'line-color': '#64748B',
-          'line-dasharray': [2, 2.2],
+          'line-color': '#FFFFFF',
           'line-width': [
             'interpolate',
             ['linear'],
             ['zoom'],
             12,
-            2.5,
-            15,
             4.5,
+            15,
+            7.2,
             18,
-            7.5,
+            11,
           ],
-          'line-opacity': 0.78,
+          'line-opacity': 0.82,
         },
-      },
-      beforeSymbol
-    );
-  }
+      });
+    }
 
-  // 4. Layer Rute Utama Terpilih (White Crisp Casing + Brand Core)
-  if (!map.getSource('teduh-route-active')) {
-    map.addSource('teduh-route-active', {
-      type: 'geojson',
-      data: { type: 'FeatureCollection', features: [] },
-    });
+    if (!map.getLayer('teduh-route-alt-line')) {
+      map.addLayer({
+        id: 'teduh-route-alt-line',
+        type: 'line',
+        source: 'teduh-route-alt',
+        layout: { 'line-cap': 'round', 'line-join': 'round' },
+        paint: {
+          'line-color': ['coalesce', ['get', 'color'], '#475569'],
+          'line-dasharray': [2, 2],
+          'line-width': [
+            'interpolate',
+            ['linear'],
+            ['zoom'],
+            12,
+            2.8,
+            15,
+            4.8,
+            18,
+            8,
+          ],
+          'line-opacity': 0.9,
+        },
+      });
+    }
 
-    map.addLayer(
-      {
+    // 2. Layer Rute Utama Terpilih / Previewed (White Crisp Casing + Brand Core)
+    if (!map.getSource('teduh-route-active')) {
+      map.addSource('teduh-route-active', {
+        type: 'geojson',
+        data: { type: 'FeatureCollection', features: [] },
+      });
+    }
+
+    if (!map.getLayer('teduh-route-casing')) {
+      map.addLayer({
         id: 'teduh-route-casing',
         type: 'line',
         source: 'teduh-route-active',
@@ -643,60 +698,80 @@ export function initializeFactualDataLayers(map: MapLibreMap): void {
             ['linear'],
             ['zoom'],
             12,
-            5.5,
+            6.5,
             15,
-            9,
+            10.5,
             18,
-            14,
+            16,
           ],
           'line-opacity': 0.98,
         },
-      },
-      beforeSymbol
-    );
+      });
+    }
 
-    map.addLayer(
-      {
+    if (!map.getLayer('teduh-route-core')) {
+      map.addLayer({
         id: 'teduh-route-core',
         type: 'line',
         source: 'teduh-route-active',
         layout: { 'line-cap': 'round', 'line-join': 'round' },
         paint: {
-          'line-color': ['coalesce', ['get', 'color'], F4MAP_PALETTE.routeComfortable],
+          'line-color': [
+            'coalesce',
+            ['get', 'color'],
+            F4MAP_PALETTE.routeComfortable,
+          ],
           'line-width': [
             'interpolate',
             ['linear'],
             ['zoom'],
             12,
-            3.2,
+            4,
             15,
-            5.6,
+            6.8,
             18,
-            9.5,
+            11,
           ],
           'line-opacity': 1,
         },
-      },
-      beforeSymbol
-    );
+      });
+    }
+
+    // Pastikan urutan layer rute selalu paling atas (tidak tertutup roadbed atau gedung)
+    for (const id of [
+      'teduh-route-alt-casing',
+      'teduh-route-alt-line',
+      'teduh-route-casing',
+      'teduh-route-core',
+    ]) {
+      if (map.getLayer(id)) {
+        map.moveLayer(id);
+      }
+    }
+  } catch {
+    // Abaikan jika style sedang transisi
   }
 }
 
 export function syncMapLayerMode(map: MapLibreMap, mode: MapLayerMode): void {
-  if (!map || !map.isStyleLoaded()) return;
+  if (!map || !map.getStyle()) return;
 
   const tcsVis = mode === 'tcs' ? 'visible' : 'none';
   const uhiVis = mode === 'uhi' ? 'visible' : 'none';
 
-  for (const id of ['teduh-tcs-casing', 'teduh-tcs-line']) {
-    if (map.getLayer(id)) {
-      map.setLayoutProperty(id, 'visibility', tcsVis);
+  try {
+    for (const id of ['teduh-tcs-casing', 'teduh-tcs-line']) {
+      if (map.getLayer(id)) {
+        map.setLayoutProperty(id, 'visibility', tcsVis);
+      }
     }
-  }
-  for (const id of ['teduh-uhi-heatmap', 'teduh-uhi-points']) {
-    if (map.getLayer(id)) {
-      map.setLayoutProperty(id, 'visibility', uhiVis);
+    for (const id of ['teduh-uhi-heatmap', 'teduh-uhi-points']) {
+      if (map.getLayer(id)) {
+        map.setLayoutProperty(id, 'visibility', uhiVis);
+      }
     }
+  } catch {
+    // Abaikan jika layer belum siap
   }
 }
 
@@ -705,7 +780,7 @@ export function syncEcoModeLayers(
   ecoMode: boolean,
   solarHour: number
 ): void {
-  if (!map || !map.isStyleLoaded()) return;
+  if (!map || !map.getStyle()) return;
 
   const buildingLayerId = findBuildingExtrusionLayerId(map);
   const vis = ecoMode ? 'none' : 'visible';

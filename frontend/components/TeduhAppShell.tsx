@@ -23,6 +23,7 @@ import {
 } from '@/services/api';
 import {
   buildTodayWibDate,
+  distanceToPolylineMeters,
   getCurrentWibSolarHour,
   haversineDistanceMeters,
   isWithinSurabayaBounds,
@@ -92,24 +93,28 @@ export const TeduhAppShell: React.FC<TeduhAppShellProps> = ({
   const mapHandleRef = useRef<MapViewHandle | null>(null);
   const [mapInstance, setMapInstance] = useState<MapLibreMap | null>(null);
 
-  // Global Spatial & UI State
-  const [activePanel, setActivePanel] = useState<'map' | 'dashboard'>(() => {
-    if (typeof window !== 'undefined') {
-      const params = new URLSearchParams(window.location.search);
-      if (params.get('panel') === 'pemkot') return 'dashboard';
-    }
-    return initialPanel;
-  });
-  const [layerMode, setLayerMode] = useState<MapLayerMode>('tcs');
-  const [solarHour, setSolarHour] = useState<number>(() =>
-    getCurrentWibSolarHour()
+  // Global Spatial & UI State (Hydration-safe deterministic defaults for SSR)
+  const [activePanel, setActivePanel] = useState<'map' | 'dashboard'>(
+    initialPanel
   );
-  const [ecoMode, setEcoMode] = useState<boolean>(() => {
-    if (typeof window !== 'undefined') {
-      return window.localStorage.getItem(ECO_STORAGE_KEY) === '1';
-    }
-    return false;
-  });
+  const [layerMode, setLayerMode] = useState<MapLayerMode>('tcs');
+  const [solarHour, setSolarHour] = useState<number>(12);
+  const [ecoMode, setEcoMode] = useState<boolean>(false);
+
+  // Sync client-only URL query, localStorage, and live WIB solar hour after hydration
+  useEffect(() => {
+    const syncTimer = window.setTimeout(() => {
+      const params = new URLSearchParams(window.location.search);
+      if (params.get('panel') === 'pemkot') {
+        setActivePanel('dashboard');
+      }
+      if (window.localStorage.getItem(ECO_STORAGE_KEY) === '1') {
+        setEcoMode(true);
+      }
+      setSolarHour(getCurrentWibSolarHour());
+    }, 0);
+    return () => window.clearTimeout(syncTimer);
+  }, []);
 
   // Backend & Community State
   const [backendOnline, setBackendOnline] = useState<boolean | null>(null);
@@ -126,9 +131,13 @@ export const TeduhAppShell: React.FC<TeduhAppShellProps> = ({
   const [routeData, setRouteData] = useState<RouteResponse | null>(null);
   const [selectedRouteType, setSelectedRouteType] =
     useState<RoutePreferenceType>('most_comfortable');
+  const [previewRouteType, setPreviewRouteType] =
+    useState<RoutePreferenceType | null>(null);
   const [loadingRoute, setLoadingRoute] = useState<boolean>(false);
   const [routeError, setRouteError] = useState<string | null>(null);
   const [isNavigating, setIsNavigating] = useState<boolean>(false);
+  const [navAnchor, setNavAnchor] = useState<PlacePoint | null>(null);
+  const [liveGpsOnRoute, setLiveGpsOnRoute] = useState<Coordinate | null>(null);
 
   // Geolocation, CCTV, & Modals
   const [userLocation, setUserLocation] = useState<Coordinate | null>(null);
@@ -155,6 +164,14 @@ export const TeduhAppShell: React.FC<TeduhAppShellProps> = ({
       return next;
     });
   }, []);
+
+  const handleSegmentMetaChange = useCallback(
+    (count: number, loading: boolean) => {
+      setSegmentCount((prev) => (loading || prev === count ? prev : count));
+      setLoadingSegments((prev) => (prev === loading ? prev : loading));
+    },
+    []
+  );
 
   const handlePanelSwitch = useCallback((panel: 'map' | 'dashboard') => {
     setActivePanel(panel);
@@ -251,6 +268,7 @@ export const TeduhAppShell: React.FC<TeduhAppShellProps> = ({
         if (signal?.aborted) return;
 
         setRouteData(result);
+        setPreviewRouteType(null);
         const recType =
           result.heat_budget.recommended_route === 'shortest'
             ? 'shortest'
@@ -353,7 +371,17 @@ export const TeduhAppShell: React.FC<TeduhAppShellProps> = ({
     );
   }, []);
 
+  const activeRouteObj = useMemo(() => {
+    if (!visibleRouteData || visibleRouteData.routes.length === 0) return null;
+    return (
+      visibleRouteData.routes.find((r) => r.type === selectedRouteType) ??
+      visibleRouteData.routes[0]
+    );
+  }, [visibleRouteData, selectedRouteType]);
+
   // Continuous GPS Tracking + <=30m Destination Arrival Callback during Active Walking Navigation
+  // Strictly filters out stale / inaccurate / off-corridor laptop IP geolocation so navigation
+  // never snaps back to a previous test location!
   useEffect(() => {
     if (
       !isNavigating ||
@@ -364,10 +392,26 @@ export const TeduhAppShell: React.FC<TeduhAppShellProps> = ({
     }
     const watchId = navigator.geolocation.watchPosition(
       (pos) => {
+        const ageMs = Math.abs(Date.now() - (pos.timestamp || Date.now()));
+        const accuracyM = pos.coords.accuracy ?? 999;
+        if (ageMs > 15_000 || accuracyM > 65) {
+          return;
+        }
+
         const nextLoc: Coordinate = {
           lat: Number(pos.coords.latitude.toFixed(6)),
           lng: Number(pos.coords.longitude.toFixed(6)),
         };
+
+        const distFromCorridor = distanceToPolylineMeters(
+          nextLoc,
+          activeRouteObj?.geometry
+        );
+        if (distFromCorridor > 150) {
+          return;
+        }
+
+        setLiveGpsOnRoute(nextLoc);
         setUserLocation(nextLoc);
 
         if (destination && haversineDistanceMeters(nextLoc, destination) <= 30) {
@@ -379,7 +423,7 @@ export const TeduhAppShell: React.FC<TeduhAppShellProps> = ({
       { enableHighAccuracy: true, maximumAge: 3000 }
     );
     return () => navigator.geolocation.clearWatch(watchId);
-  }, [isNavigating, destination]);
+  }, [isNavigating, destination, activeRouteObj]);
 
   // Pure Derived <=80m Proximity Alert Prompt
   const proximityPrompt = useMemo(
@@ -391,6 +435,14 @@ export const TeduhAppShell: React.FC<TeduhAppShellProps> = ({
       ),
     [userLocation, activeAlerts, dismissedProximityIds]
   );
+
+  // Helper to assign a manual Origin A while clearing any stale GPS location from earlier tests
+  const assignManualOrigin = useCallback((point: PlacePoint | null) => {
+    setOrigin(point);
+    setNavAnchor(point);
+    setLiveGpsOnRoute(null);
+    setUserLocation(null);
+  }, []);
 
   // Map Coordinate Click Handler
   const handleMapCoordinatePick = useCallback(
@@ -414,7 +466,7 @@ export const TeduhAppShell: React.FC<TeduhAppShellProps> = ({
       if (pickTarget === 'origin') {
         setPickTarget(null);
         const label = await reverseGeocodeSurabaya(coord.lat, coord.lng);
-        setOrigin({ ...coord, label });
+        assignManualOrigin({ ...coord, label });
         return;
       }
 
@@ -428,19 +480,28 @@ export const TeduhAppShell: React.FC<TeduhAppShellProps> = ({
       if (!isNavigating && activePanel === 'map') {
         if (!origin) {
           const label = await reverseGeocodeSurabaya(coord.lat, coord.lng);
-          setOrigin({ ...coord, label });
+          assignManualOrigin({ ...coord, label });
         } else if (!destination) {
           const label = await reverseGeocodeSurabaya(coord.lat, coord.lng);
           setDestination({ ...coord, label });
         }
       }
     },
-    [pickTarget, isNavigating, activePanel, origin, destination]
+    [
+      pickTarget,
+      isNavigating,
+      activePanel,
+      origin,
+      destination,
+      assignManualOrigin,
+    ]
   );
 
   const openReportAtCurrentContext = useCallback(() => {
     if (userLocation && isWithinSurabayaBounds(userLocation)) {
       setReportCoord(userLocation);
+    } else if (origin && isWithinSurabayaBounds(origin)) {
+      setReportCoord(origin);
     } else if (mapInstance) {
       const c = mapInstance.getCenter();
       setReportCoord({
@@ -451,15 +512,26 @@ export const TeduhAppShell: React.FC<TeduhAppShellProps> = ({
       setReportCoord(SURABAYA_CENTER);
     }
     setReportModalOpen(true);
-  }, [userLocation, mapInstance]);
+  }, [userLocation, origin, mapInstance]);
 
-  const activeRouteObj = useMemo(() => {
-    if (!visibleRouteData || visibleRouteData.routes.length === 0) return null;
-    return (
-      visibleRouteData.routes.find((r) => r.type === selectedRouteType) ??
-      visibleRouteData.routes[0]
-    );
-  }, [visibleRouteData, selectedRouteType]);
+  const handleStartNavigation = useCallback(() => {
+    if (!origin || !destination || !activeRouteObj || loadingRoute) return;
+    setPreviewRouteType(null);
+    setNavAnchor(origin);
+    setLiveGpsOnRoute(null);
+    if (
+      userLocation &&
+      distanceToPolylineMeters(userLocation, activeRouteObj.geometry) > 150
+    ) {
+      setUserLocation(null);
+    }
+    setIsNavigating(true);
+  }, [origin, destination, activeRouteObj, loadingRoute, userLocation]);
+
+  const activeNavPosition: Coordinate | null = isNavigating
+    ? (liveGpsOnRoute ?? navAnchor ?? origin)
+    : null;
+  const isSimulatedGps = !liveGpsOnRoute;
 
   return (
     <main className="relative h-dvh w-dvw overflow-hidden bg-[#F4F2EC]">
@@ -468,8 +540,10 @@ export const TeduhAppShell: React.FC<TeduhAppShellProps> = ({
         origin={origin}
         destination={destination}
         userLocation={userLocation}
+        navPosition={activeNavPosition}
         routeData={visibleRouteData}
         selectedRouteType={selectedRouteType}
+        previewRouteType={previewRouteType}
         cctvCameras={visibleCorridorCameras}
         activeAlerts={activeAlerts}
         layerMode={layerMode}
@@ -481,10 +555,7 @@ export const TeduhAppShell: React.FC<TeduhAppShellProps> = ({
         onMapCoordinatePick={handleMapCoordinatePick}
         onSelectCCTV={setActiveCCTV}
         onSelectAlert={setSelectedAlert}
-        onSegmentMetaChange={(count, loading) => {
-          setSegmentCount((prev) => (loading ? prev : count));
-          setLoadingSegments(loading);
-        }}
+        onSegmentMetaChange={handleSegmentMetaChange}
       />
 
       <Navbar
@@ -503,17 +574,18 @@ export const TeduhAppShell: React.FC<TeduhAppShellProps> = ({
         loadingRoute={loadingRoute}
         errorMessage={routeError}
         hidden={isNavigating}
-        onSelectOrigin={setOrigin}
+        onSelectOrigin={assignManualOrigin}
         onSelectDestination={setDestination}
         onSwapPoints={() => {
           const prevOrigin = origin;
-          setOrigin(destination);
+          assignManualOrigin(destination);
           setDestination(prevOrigin);
         }}
         onClearAll={() => {
-          setOrigin(null);
+          assignManualOrigin(null);
           setDestination(null);
           setRouteData(null);
+          setPreviewRouteType(null);
           setRouteError(null);
           setCorridorCameras([]);
           setActiveCCTV(null);
@@ -552,10 +624,13 @@ export const TeduhAppShell: React.FC<TeduhAppShellProps> = ({
       <RoutePanel
         routeData={visibleRouteData}
         selectedRouteType={selectedRouteType}
+        previewRouteType={previewRouteType}
+        loadingRoute={loadingRoute}
         cctvCameras={visibleCorridorCameras}
         hidden={isNavigating}
         onSelectRouteType={setSelectedRouteType}
-        onStartNavigation={() => setIsNavigating(true)}
+        onPreviewRouteType={setPreviewRouteType}
+        onStartNavigation={handleStartNavigation}
         onOpenCCTV={setActiveCCTV}
         onOpenIncidentModal={openReportAtCurrentContext}
       />
@@ -569,8 +644,10 @@ export const TeduhAppShell: React.FC<TeduhAppShellProps> = ({
       {isNavigating && activeRouteObj && destination && (
         <NavigationOverlay
           activeRoute={activeRouteObj}
+          origin={navAnchor ?? origin}
           destination={destination}
-          userLocation={userLocation}
+          navPosition={activeNavPosition}
+          isSimulatedGps={isSimulatedGps}
           onOpenReportModal={openReportAtCurrentContext}
           onFinishNavigation={() => {
             setIsNavigating(false);

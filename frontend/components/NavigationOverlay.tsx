@@ -3,30 +3,49 @@
 import React, { useMemo } from 'react';
 import { Check, Flag, Navigation2, Trees } from 'lucide-react';
 import type { Coordinate, PlacePoint, RouteResult } from '@/types';
-import { getTcsGrade, haversineDistanceMeters } from '@/utils/geoMath';
+import { getTcsGrade, projectOnPolyline } from '@/utils/geoMath';
 
 interface NavigationOverlayProps {
   activeRoute: RouteResult;
+  origin: PlacePoint | null;
   destination: PlacePoint;
-  userLocation: Coordinate | null;
+  navPosition: Coordinate | null;
+  isSimulatedGps?: boolean;
   onOpenReportModal: () => void;
   onFinishNavigation: () => void;
 }
 
 export const NavigationOverlay: React.FC<NavigationOverlayProps> = ({
   activeRoute,
+  origin,
   destination,
-  userLocation,
+  navPosition,
+  isSimulatedGps = true,
   onOpenReportModal,
   onFinishNavigation,
 }) => {
   const remainingMeters = useMemo(() => {
-    if (!userLocation) return activeRoute.distance_m;
-    return haversineDistanceMeters(userLocation, destination);
-  }, [userLocation, destination, activeRoute.distance_m]);
+    if (isSimulatedGps || !navPosition) {
+      return activeRoute.distance_m;
+    }
+    const proj = projectOnPolyline(
+      navPosition,
+      activeRoute.geometry,
+      activeRoute.distance_m
+    );
+    if (proj.distanceFromRouteMeters > 150) {
+      return activeRoute.distance_m;
+    }
+    return proj.remainingRouteMeters;
+  }, [isSimulatedGps, navPosition, activeRoute.geometry, activeRoute.distance_m]);
 
   // Walking speed 4.5 km/h = 75 m/min (konsisten dengan api/routes/navigation.py baris 226)
-  const remainingMinutes = Math.max(1, Math.round(remainingMeters / 75));
+  const remainingMinutes = Math.max(
+    1,
+    isSimulatedGps
+      ? Math.round(activeRoute.duration_min)
+      : Math.round(remainingMeters / 75)
+  );
   const currentSegment = activeRoute.segments[0] ?? null;
   const displayTcs = currentSegment?.tcs_value ?? activeRoute.avg_tcs;
   const grade = getTcsGrade(displayTcs);
@@ -42,12 +61,13 @@ export const NavigationOverlay: React.FC<NavigationOverlayProps> = ({
             </span>
             <div className="min-w-0">
               <p className="truncate text-xs font-bold text-white">
-                Menuju {destination.label}
+                {origin ? `${origin.label} → ${destination.label}` : `Menuju ${destination.label}`}
               </p>
               <p className="mt-0.5 truncate text-[11px] text-slate-300">
                 {currentSegment
                   ? `Koridor Segmen #${currentSegment.segment_id}${currentSegment.shade_ratio === null ? '' : ` • Teduh ${Math.round(currentSegment.shade_ratio * 100)}%`}`
                   : `Rute ${activeRoute.type === 'most_comfortable' ? 'Ternyaman' : 'Tercepat'} aktif`}
+                {isSimulatedGps ? ' • Mulai dari Titik A' : ' • GPS Aktif'}
               </p>
             </div>
           </div>

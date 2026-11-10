@@ -146,7 +146,7 @@ function AlertDetailContent({
         ) : (
           <>
             <div className="flex items-center justify-between text-[11px]">
-              <span className="font-semibold text-slate-600">
+              <span className="font-semibold text-slate-700">
                 Konfirmasi Warga
               </span>
               <span className="font-mono font-bold text-slate-900 tabular-nums">
@@ -172,7 +172,7 @@ function AlertDetailContent({
         </div>
       ) : (
         <div className="mt-3">
-          <p className="mb-1.5 text-[11px] font-semibold text-slate-600">
+          <p className="mb-1.5 text-[11px] font-semibold text-slate-700">
             Apakah kendala ini masih ada di lokasi?
           </p>
           <div className="grid grid-cols-2 gap-1.5">
@@ -180,7 +180,7 @@ function AlertDetailContent({
               type="button"
               disabled={submitting}
               onClick={() => void handleVote('still_active')}
-              className="flex items-center justify-center gap-1.5 rounded-xl border border-slate-200 bg-white py-1.5 font-semibold text-slate-800 hover:bg-slate-50 disabled:opacity-50"
+              className="flex items-center justify-center gap-1.5 rounded-xl border border-slate-300 bg-white py-1.5 font-semibold text-slate-800 transition-colors hover:bg-slate-100 disabled:opacity-50"
             >
               <ThumbsUp className="h-3.5 w-3.5 text-[#0E7C86]" />
               <span>Masih Ada</span>
@@ -189,9 +189,9 @@ function AlertDetailContent({
               type="button"
               disabled={submitting}
               onClick={() => void handleVote('no_longer_active')}
-              className="flex items-center justify-center gap-1.5 rounded-xl border border-slate-200 bg-white py-1.5 font-semibold text-slate-800 hover:bg-slate-50 disabled:opacity-50"
+              className="flex items-center justify-center gap-1.5 rounded-xl border border-slate-300 bg-white py-1.5 font-semibold text-slate-800 transition-colors hover:bg-slate-100 disabled:opacity-50"
             >
-              <ThumbsDown className="h-3.5 w-3.5 text-slate-500" />
+              <ThumbsDown className="h-3.5 w-3.5 text-slate-600" />
               <span>Sudah Bersih</span>
             </button>
           </div>

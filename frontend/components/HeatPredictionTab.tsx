@@ -36,8 +36,8 @@ export const HeatPredictionTab: React.FC<HeatPredictionTabProps> = ({
 
   if (!prediction) {
     return (
-      <div className="rounded-2xl border border-slate-200 bg-white p-8 text-center text-xs text-slate-500">
-        Data prediksi panas belum tersedia di tabel <code className="font-mono">tcs_simulations</code>. Pastikan Spark pipeline telah dijalankan.
+      <div className="rounded-2xl border border-slate-700 bg-slate-800/60 p-8 text-center text-xs text-slate-400">
+        Data prediksi panas belum tersedia di tabel <code className="font-mono text-teal-300">tcs_simulations</code>. Pastikan Spark pipeline telah dijalankan.
       </div>
     );
   }
@@ -49,78 +49,78 @@ export const HeatPredictionTab: React.FC<HeatPredictionTabProps> = ({
       : 'Simulasi Formula TCS';
 
   return (
-    <div className="space-y-5">
+    <div className="space-y-6">
       {/* Top KPI Cards */}
-      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-        <div className="rounded-2xl border border-slate-200 bg-white p-4">
-          <p className="text-xs font-medium text-slate-500">
+      <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
+        <div className="rounded-2xl border border-rose-500/40 bg-rose-950/20 p-4">
+          <p className="text-xs font-semibold text-rose-300">
             Segmen Panas (TCS &lt; 0.50)
           </p>
-          <p className="mt-1 font-mono text-2xl font-extrabold text-red-700 tabular-nums">
+          <p className="mt-1 font-mono text-2xl font-black text-rose-400 tabular-nums">
             {summary.hot_segments.toLocaleString('id-ID')}
           </p>
-          <p className="mt-1 text-[11px] text-slate-500">
+          <p className="mt-1 text-[11px] text-slate-400">
             {summary.hot_percentage}% dari{' '}
             {summary.total_segments.toLocaleString('id-ID')} segmen
           </p>
         </div>
 
-        <div className="rounded-2xl border border-slate-200 bg-white p-4">
-          <p className="text-xs font-medium text-slate-500">
+        <div className="rounded-2xl border border-slate-700 bg-slate-800/80 p-4">
+          <p className="text-xs font-semibold text-slate-400">
             Rata-Rata TCS Kota
           </p>
-          <p className="mt-1 font-mono text-2xl font-extrabold text-slate-900 tabular-nums">
+          <p className="mt-1 font-mono text-2xl font-black text-white tabular-nums">
             {summary.avg_city_tcs.toFixed(3)}
           </p>
-          <p className="mt-1 text-[11px] text-slate-500">
+          <p className="mt-1 text-[11px] text-teal-400">
             {summary.cool_segments.toLocaleString('id-ID')} segmen sudah teduh
             (&gt;0.65)
           </p>
         </div>
 
-        <div className="rounded-2xl border border-slate-200 bg-white p-4">
-          <p className="text-xs font-medium text-slate-500">
+        <div className="rounded-2xl border border-orange-500/40 bg-orange-950/20 p-4">
+          <p className="text-xs font-semibold text-orange-300">
             Suhu Terasa Rata-Rata / Maks
           </p>
-          <p className="mt-1 font-mono text-2xl font-extrabold text-orange-700 tabular-nums">
+          <p className="mt-1 font-mono text-2xl font-black text-orange-400 tabular-nums">
             {summary.avg_apparent_temp}°C{' '}
             <span className="text-sm font-semibold text-slate-400">
               / {summary.max_apparent_temp}°C
             </span>
           </p>
-          <p className="mt-1 text-[11px] text-slate-500">
+          <p className="mt-1 text-[11px] text-slate-400">
             {summary.peak_heat_hour === null
               ? 'Prakiraan per jam belum tersedia'
               : `Jam puncak terik sekitar ${summary.peak_heat_hour}:00 WIB`}
           </p>
         </div>
 
-        <div className="rounded-2xl border border-slate-200 bg-white p-4">
-          <p className="text-xs font-medium text-slate-500">
+        <div className="rounded-2xl border border-slate-700 bg-slate-800/80 p-4">
+          <p className="text-xs font-semibold text-slate-400">
             Kandidat Intervensi Terbaik
           </p>
-          <p className="mt-1 font-mono text-2xl font-extrabold text-[#0E7C86] tabular-nums">
+          <p className="mt-1 font-mono text-2xl font-black text-teal-400 tabular-nums">
             {simulations.length}
           </p>
-          <p className="mt-1 text-[11px] text-slate-500">
+          <p className="mt-1 text-[11px] text-slate-400">
             Segmen hasil pemodelan ({scenarioModelLabel})
           </p>
         </div>
       </div>
 
       {/* Multi-Scenario Hourly TCS Curve (Recharts) */}
-      <div className="rounded-2xl border border-slate-200 bg-white p-4 sm:p-5">
+      <div className="rounded-2xl border border-slate-700 bg-slate-800/80 p-5">
         <div className="mb-4 flex flex-col justify-between gap-1 sm:flex-row sm:items-center">
           <div>
-            <h3 className="text-sm font-bold text-slate-900">
+            <h3 className="text-sm font-bold text-white">
               Kurva Harian Kenyamanan Termal (06:00 – 21:00 WIB)
             </h3>
-            <p className="text-xs text-slate-500">
+            <p className="text-xs text-slate-400">
               Prakiraan cuaca per jam, dibandingkan dengan skenario penambahan
               kanopi pohon dan <em>cool pavement</em>.
             </p>
           </div>
-          <span className="inline-flex items-center gap-1 rounded-full bg-teal-50 px-2.5 py-1 text-[11px] font-semibold text-[#0E7C86]">
+          <span className="inline-flex items-center gap-1 rounded-full border border-teal-500/40 bg-teal-500/20 px-2.5 py-1 text-[11px] font-semibold text-teal-300">
             <Sparkles className="h-3.5 w-3.5" />
             <span>{scenarioModelLabel}</span>
           </span>
@@ -128,79 +128,81 @@ export const HeatPredictionTab: React.FC<HeatPredictionTabProps> = ({
 
         <div className="h-68 w-full">
           {hourly_trend.length === 0 ? (
-            <p className="flex h-full items-center justify-center text-xs text-slate-500">
+            <p className="flex h-full items-center justify-center text-xs text-slate-400">
               Prakiraan per jam belum tersedia. Jalankan pembaruan data.
             </p>
           ) : (
-          <ResponsiveContainer width="100%" height="100%">
-            <LineChart
-              data={hourly_trend}
-              margin={{ top: 8, right: 16, left: 0, bottom: 4 }}
-            >
-              <CartesianGrid strokeDasharray="3 3" stroke="#E2E8F0" />
-              <XAxis
-                dataKey="label"
-                tick={{ fontSize: 11, fill: '#64748B' }}
-                stroke="#CBD5E1"
-              />
-              <YAxis
-                domain={[0.3, 1.0]}
-                tick={{ fontSize: 11, fill: '#64748B' }}
-                stroke="#CBD5E1"
-              />
-              <Tooltip
-                contentStyle={{
-                  borderRadius: '12px',
-                  borderColor: '#E2E8F0',
-                  fontSize: '12px',
-                }}
-              />
-              <Legend wrapperStyle={{ fontSize: '12px' }} />
-              <Line
-                type="monotone"
-                dataKey="tcs_current"
-                name="TCS Eksisting"
-                stroke="#D9532F"
-                strokeWidth={2.5}
-                dot={false}
-              />
-              <Line
-                type="monotone"
-                dataKey="tcs_green_scenario"
-                name="Skenario Penghijauan"
-                stroke="#1F8A5B"
-                strokeWidth={2.5}
-                dot={false}
-              />
-              <Line
-                type="monotone"
-                dataKey="tcs_cool_scenario"
-                name="Skenario Cool Pavement"
-                stroke="#0E7C86"
-                strokeWidth={2}
-                strokeDasharray="5 4"
-                dot={false}
-              />
-            </LineChart>
-          </ResponsiveContainer>
+            <ResponsiveContainer width="100%" height="100%">
+              <LineChart
+                data={hourly_trend}
+                margin={{ top: 8, right: 16, left: 0, bottom: 4 }}
+              >
+                <CartesianGrid strokeDasharray="3 3" stroke="#334155" />
+                <XAxis
+                  dataKey="label"
+                  tick={{ fontSize: 11, fill: '#94A3B8' }}
+                  stroke="#475569"
+                />
+                <YAxis
+                  domain={[0.3, 1.0]}
+                  tick={{ fontSize: 11, fill: '#94A3B8' }}
+                  stroke="#475569"
+                />
+                <Tooltip
+                  contentStyle={{
+                    backgroundColor: '#0F172A',
+                    borderRadius: '12px',
+                    borderColor: '#334155',
+                    color: '#F8FAFC',
+                    fontSize: '12px',
+                  }}
+                />
+                <Legend wrapperStyle={{ fontSize: '12px', color: '#94A3B8' }} />
+                <Line
+                  type="monotone"
+                  dataKey="tcs_current"
+                  name="TCS Eksisting"
+                  stroke="#F87171"
+                  strokeWidth={2.5}
+                  dot={false}
+                />
+                <Line
+                  type="monotone"
+                  dataKey="tcs_green_scenario"
+                  name="Skenario Penghijauan"
+                  stroke="#34D399"
+                  strokeWidth={2.5}
+                  dot={false}
+                />
+                <Line
+                  type="monotone"
+                  dataKey="tcs_cool_scenario"
+                  name="Skenario Cool Pavement"
+                  stroke="#2DD4BF"
+                  strokeWidth={2}
+                  strokeDasharray="5 4"
+                  dot={false}
+                />
+              </LineChart>
+            </ResponsiveContainer>
           )}
         </div>
       </div>
 
       {/* Sub-Switch: Top 50 Hot Zones vs Top 50 Greening Gain Simulations */}
-      <div className="space-y-3">
+      <div className="space-y-4">
         <div className="flex flex-wrap items-center justify-between gap-2">
-          <div className="inline-flex rounded-xl bg-slate-100 p-1 text-xs font-semibold">
+          <div className="inline-flex rounded-xl border border-slate-700 bg-slate-800 p-1 text-xs font-semibold">
             <button
               type="button"
               onClick={() => setSubView('hotzones')}
               className={`flex items-center gap-1.5 rounded-lg px-3 py-1.5 transition-all ${
                 subView === 'hotzones'
-                  ? 'bg-white text-slate-900 shadow-xs'
-                  : 'text-slate-600 hover:text-slate-900'
+                  ? 'bg-slate-700 text-white shadow-xs'
+                  : 'text-slate-400 hover:text-slate-200'
               }`}
             >
-              <Flame className="h-3.5 w-3.5 text-orange-600" />
+              <Flame className="h-3.5 w-3.5 text-orange-400" />
               <span>50 Zona Terpanas ({hot_zones.length})</span>
             </button>
             <button
@@ -208,11 +210,11 @@ export const HeatPredictionTab: React.FC<HeatPredictionTabProps> = ({
               onClick={() => setSubView('simulations')}
               className={`flex items-center gap-1.5 rounded-lg px-3 py-1.5 transition-all ${
                 subView === 'simulations'
-                  ? 'bg-white text-slate-900 shadow-xs'
-                  : 'text-slate-600 hover:text-slate-900'
+                  ? 'bg-slate-700 text-white shadow-xs'
+                  : 'text-slate-400 hover:text-slate-200'
               }`}
             >
-              <Trees className="h-3.5 w-3.5 text-emerald-600" />
+              <Trees className="h-3.5 w-3.5 text-emerald-400" />
               <span>Dampak Penghijauan Tertinggi ({simulations.length})</span>
             </button>
           </div>
@@ -223,7 +225,7 @@ export const HeatPredictionTab: React.FC<HeatPredictionTabProps> = ({
             tabIndex={0}
             role="region"
             aria-labelledby="hotzones-caption"
-            className="table-wrapper"
+            className="table-wrapper-dark"
           >
             <table
               style={
@@ -240,64 +242,64 @@ export const HeatPredictionTab: React.FC<HeatPredictionTabProps> = ({
               <caption id="hotzones-caption" className="sr-only">
                 Daftar 50 segmen zona terpanas beserta proyeksi kenaikan TCS
               </caption>
-              <thead className="bg-slate-50 text-[11px] font-semibold text-slate-600">
+              <thead className="border-b border-slate-700 bg-slate-900/90 text-[11px] font-bold uppercase tracking-wider text-slate-300">
                 <tr>
-                  <th className="border-b border-slate-200 px-3.5 py-2.5">
+                  <th className="px-4 py-3">
                     Segmen Jalan
                   </th>
-                  <th className="border-b border-slate-200 px-3.5 py-2.5">
+                  <th className="px-4 py-3">
                     Tipe
                   </th>
-                  <th className="border-b border-slate-200 px-3.5 py-2.5">
+                  <th className="px-4 py-3">
                     Suhu Terasa
                   </th>
-                  <th className="border-b border-slate-200 px-3.5 py-2.5">
+                  <th className="px-4 py-3">
                     Rasio Teduh
                   </th>
-                  <th className="border-b border-slate-200 px-3.5 py-2.5">
+                  <th className="px-4 py-3">
                     TCS Saat Ini
                   </th>
-                  <th className="border-b border-slate-200 px-3.5 py-2.5">
+                  <th className="px-4 py-3">
                     Skenario Hijau
                   </th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-slate-100">
+              <tbody className="divide-y divide-slate-800">
                 {hot_zones.map((z) => {
                   const grade = getTcsGrade(z.current_tcs);
                   return (
-                    <tr key={z.segment_id} className="hover:bg-slate-50/80">
+                    <tr key={z.segment_id} className="transition-colors hover:bg-slate-800/60">
                       <th
                         scope="row"
-                        className="px-3.5 py-2.5 font-semibold text-slate-900"
+                        className="px-4 py-3 font-semibold text-white"
                       >
                         <div>{z.street_name}</div>
                         <div className="font-mono text-[10px] font-normal text-slate-400">
                           ID #{z.segment_id}
                         </div>
                       </th>
-                      <td className="px-3.5 py-2.5 text-slate-600">
+                      <td className="px-4 py-3 text-slate-300">
                         {z.highway_type}
                       </td>
-                      <td className="px-3.5 py-2.5 font-mono font-semibold text-orange-700 tabular-nums">
+                      <td className="px-4 py-3 font-mono font-semibold text-orange-400 tabular-nums">
                         {z.apparent_temp.toFixed(1)}°C
                       </td>
-                      <td className="px-3.5 py-2.5 font-mono text-slate-600 tabular-nums">
+                      <td className="px-4 py-3 font-mono text-slate-300 tabular-nums">
                         {Math.round(z.shade_ratio * 100)}%
                       </td>
-                      <td className="px-3.5 py-2.5 font-mono tabular-nums">
+                      <td className="px-4 py-3 font-mono tabular-nums">
                         <span
-                          className="rounded px-1.5 py-0.5 text-[11px] font-bold text-white"
+                          className="rounded-full px-2.5 py-0.5 text-[11px] font-bold text-white shadow-xs"
                           style={{ backgroundColor: grade.color }}
                         >
                           {z.current_tcs.toFixed(3)}
                         </span>
                       </td>
-                      <td className="px-3.5 py-2.5 font-mono tabular-nums">
-                        <span className="font-bold text-emerald-700">
+                      <td className="px-4 py-3 font-mono tabular-nums">
+                        <span className="font-bold text-emerald-400">
                           {z.predicted_tcs_green.toFixed(3)}
                         </span>
-                        <span className="ml-1.5 inline-flex items-center text-[10px] font-semibold text-emerald-600">
+                        <span className="ml-1.5 inline-flex items-center text-[10px] font-semibold text-emerald-400">
                           <ArrowUpRight className="h-3 w-3" />+
                           {z.improvement_pct}%
                         </span>
@@ -313,7 +315,7 @@ export const HeatPredictionTab: React.FC<HeatPredictionTabProps> = ({
             tabIndex={0}
             role="region"
             aria-labelledby="sim-caption"
-            className="table-wrapper"
+            className="table-wrapper-dark"
           >
             <table
               style={
@@ -330,57 +332,57 @@ export const HeatPredictionTab: React.FC<HeatPredictionTabProps> = ({
               <caption id="sim-caption" className="sr-only">
                 Peringkat 50 segmen dengan kenaikan kenyamanan tertinggi
               </caption>
-              <thead className="bg-slate-50 text-[11px] font-semibold text-slate-600">
+              <thead className="border-b border-slate-700 bg-slate-900/90 text-[11px] font-bold uppercase tracking-wider text-slate-300">
                 <tr>
-                  <th className="border-b border-slate-200 px-3.5 py-2.5">
+                  <th className="px-4 py-3">
                     Nama Jalan / Segmen
                   </th>
-                  <th className="border-b border-slate-200 px-3.5 py-2.5">
+                  <th className="px-4 py-3">
                     TCS Awal
                   </th>
-                  <th className="border-b border-slate-200 px-3.5 py-2.5">
+                  <th className="px-4 py-3">
                     Penghijauan
                   </th>
-                  <th className="border-b border-slate-200 px-3.5 py-2.5">
+                  <th className="px-4 py-3">
                     Cool Pavement
                   </th>
-                  <th className="border-b border-slate-200 px-3.5 py-2.5">
+                  <th className="px-4 py-3">
                     Gain Hijau
                   </th>
-                  <th className="border-b border-slate-200 px-3.5 py-2.5 text-right">
+                  <th className="px-4 py-3 text-right">
                     Peta 3D
                   </th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-slate-100">
+              <tbody className="divide-y divide-slate-800">
                 {simulations.map((sim) => {
                   const center = extractGeometryCenter(sim.geometry);
                   return (
-                    <tr key={sim.segment_id} className="hover:bg-slate-50/80">
+                    <tr key={sim.segment_id} className="transition-colors hover:bg-slate-800/60">
                       <th
                         scope="row"
-                        className="px-3.5 py-2.5 font-semibold text-slate-900"
+                        className="px-4 py-3 font-semibold text-white"
                       >
                         {sim.street_name}
                       </th>
-                      <td className="px-3.5 py-2.5 font-mono text-slate-600 tabular-nums">
+                      <td className="px-4 py-3 font-mono text-slate-300 tabular-nums">
                         {sim.current_tcs.toFixed(3)}
                       </td>
-                      <td className="px-3.5 py-2.5 font-mono font-bold text-emerald-700 tabular-nums">
+                      <td className="px-4 py-3 font-mono font-bold text-emerald-400 tabular-nums">
                         {sim.predicted_tcs_green.toFixed(3)}
                       </td>
-                      <td className="px-3.5 py-2.5 font-mono text-[#0E7C86] tabular-nums">
+                      <td className="px-4 py-3 font-mono text-teal-300 tabular-nums">
                         {sim.predicted_tcs_cool.toFixed(3)}
                       </td>
-                      <td className="px-3.5 py-2.5 font-mono font-bold text-emerald-600 tabular-nums">
+                      <td className="px-4 py-3 font-mono font-bold text-emerald-400 tabular-nums">
                         +{sim.tcs_improvement_green.toFixed(3)}
                       </td>
-                      <td className="px-3.5 py-2.5 text-right">
+                      <td className="px-4 py-3 text-right">
                         {center && (
                           <button
                             type="button"
                             onClick={() => onFlyToMap(center, sim.street_name)}
-                            className="inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-2.5 py-1 text-[11px] font-semibold text-slate-700 hover:bg-teal-50 hover:text-[#0E7C86]"
+                            className="inline-flex items-center gap-1 rounded-xl border border-teal-500/40 bg-slate-800 px-2.5 py-1 text-[11px] font-semibold text-teal-300 hover:bg-teal-600/30 hover:text-white transition-colors"
                           >
                             <MapPin className="h-3 w-3" />
                             <span>Lihat</span>

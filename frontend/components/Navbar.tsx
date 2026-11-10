@@ -44,6 +44,14 @@ export const Navbar: React.FC<NavbarProps> = ({
             </span>
           </div>
           <span
+            role="status"
+            aria-label={
+              backendOnline === null
+                ? 'Memeriksa status API'
+                : backendOnline
+                  ? 'API Backend terhubung'
+                  : 'API Backend tidak terjangkau'
+            }
             title={
               backendOnline === null
                 ? 'Memeriksa status API...'
@@ -68,26 +76,28 @@ export const Navbar: React.FC<NavbarProps> = ({
           <button
             type="button"
             onClick={() => onChangePanel('map')}
+            aria-pressed={activePanel === 'map'}
             className={`flex items-center gap-1.5 rounded-full px-3 py-1.5 transition-colors ${
               activePanel === 'map'
                 ? 'bg-[#0E7C86] text-white shadow-xs'
                 : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900'
             }`}
           >
-            <MapIcon className="h-3.5 w-3.5" />
+            <MapIcon aria-hidden="true" className="h-3.5 w-3.5" />
             <span>Peta 3D</span>
           </button>
 
           <button
             type="button"
             onClick={() => onChangePanel('dashboard')}
+            aria-pressed={activePanel === 'dashboard'}
             className={`flex items-center gap-1.5 rounded-full px-3 py-1.5 transition-colors ${
               activePanel === 'dashboard'
                 ? 'bg-slate-900 text-white shadow-xs'
                 : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900'
             }`}
           >
-            <BarChart3 className="h-3.5 w-3.5" />
+            <BarChart3 aria-hidden="true" className="h-3.5 w-3.5" />
             <span>Pemkot</span>
             {pendingReportsCount > 0 && (
               <span className="rounded-full bg-amber-500 px-1.5 py-0.2 font-mono text-[10px] font-bold text-white tabular-nums">
@@ -103,10 +113,11 @@ export const Navbar: React.FC<NavbarProps> = ({
         <button
           type="button"
           onClick={onOpenReportModal}
+          aria-label="Lapor Jalur — Laporkan kendala jalur pejalan kaki"
           title="Laporkan kendala jalur pejalan kaki (TEDUH-Eye)"
           className="flex items-center gap-1 rounded-full bg-amber-50 px-2.5 py-1.5 text-xs font-semibold text-amber-800 ring-1 ring-amber-200/80 transition-colors hover:bg-amber-100"
         >
-          <Flag className="h-3.5 w-3.5 text-amber-600" />
+          <Flag aria-hidden="true" className="h-3.5 w-3.5 text-amber-600" />
           <span className="hidden md:inline">Lapor Jalur</span>
         </button>
       </nav>

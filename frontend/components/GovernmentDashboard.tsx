@@ -284,18 +284,28 @@ export const GovernmentDashboard: React.FC<GovernmentDashboardProps> = ({
       ref={dialogRef}
       aria-labelledby={titleId}
       {...({ closedby: 'any' } as Record<string, string>)}
-      className="m-auto h-[92dvh] w-[calc(100dvw-1.25rem)] max-w-6xl overflow-hidden rounded-3xl bg-slate-50 shadow-2xl"
+      className="m-auto h-[92dvh] w-[calc(100dvw-1.25rem)] max-w-6xl overflow-hidden rounded-3xl bg-transparent p-0 shadow-2xl"
     >
-      <div className="flex h-full flex-col">
+      <div className="flex h-full w-full flex-col overflow-hidden rounded-3xl border border-slate-700 bg-slate-900 text-slate-100 shadow-2xl">
         {/* Top Executive Header */}
-        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 bg-white px-5 py-4">
-          <div>
-            <p className="text-[11px] font-bold tracking-wide text-[#0E7C86] uppercase">
-              Decision Support System • Pemerintah Kota Surabaya
-            </p>
-            <h2 id={titleId} className="text-base font-extrabold text-slate-900">
-              Analitik Iklim Mikro, Koridor Penghijauan, & Moderasi Warga
-            </h2>
+        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-700/80 bg-slate-800/80 px-6 py-4">
+          <div className="flex items-center gap-3">
+            <div className="flex h-10 w-10 items-center justify-center rounded-2xl border border-teal-500/30 bg-teal-500/20 text-teal-400">
+              <Flame className="h-5 w-5" />
+            </div>
+            <div>
+              <div className="flex items-center gap-2">
+                <h2 id={titleId} className="text-base font-extrabold tracking-tight text-white">
+                  Dashboard Analitik Mitigasi UHI & Moderasi Pemkot Surabaya
+                </h2>
+                <span className="rounded-full border border-teal-500/40 bg-teal-500/20 px-2 py-0.5 text-[10px] font-bold text-teal-300">
+                  TEDUH v0.2
+                </span>
+              </div>
+              <p className="text-xs text-slate-400">
+                Decision Support System Berbasis Apache Sedona, Spark MLlib & PostGIS
+              </p>
+            </div>
           </div>
 
           <div className="flex items-center gap-2">
@@ -303,7 +313,7 @@ export const GovernmentDashboard: React.FC<GovernmentDashboardProps> = ({
               type="button"
               onClick={() => void loadAllDashboardData()}
               disabled={loading}
-              className="flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+              className="flex items-center gap-1.5 rounded-xl border border-slate-700 bg-slate-800 px-3 py-1.5 text-xs font-semibold text-slate-300 transition-colors hover:bg-slate-700 hover:text-white disabled:opacity-50"
             >
               <RefreshCw
                 className={`h-3.5 w-3.5 ${loading ? 'animate-spin' : ''}`}
@@ -315,7 +325,7 @@ export const GovernmentDashboard: React.FC<GovernmentDashboardProps> = ({
               type="button"
               onClick={onClose}
               aria-label="Kembali ke Peta 3D"
-              className="flex items-center gap-1.5 rounded-xl bg-slate-900 px-3 py-1.5 text-xs font-bold text-white hover:bg-slate-800"
+              className="flex items-center gap-1.5 rounded-xl border border-slate-700 bg-slate-800 px-3 py-1.5 text-xs font-bold text-slate-400 transition-colors hover:bg-rose-900/40 hover:text-rose-400"
             >
               <X className="h-3.5 w-3.5" />
               <span>Tutup</span>
@@ -324,7 +334,7 @@ export const GovernmentDashboard: React.FC<GovernmentDashboardProps> = ({
         </div>
 
         {/* Navigation Tabs */}
-        <div className="flex gap-1.5 overflow-x-auto border-b border-slate-200 bg-white px-5 py-2">
+        <div className="flex gap-2 overflow-x-auto border-b border-slate-700/60 bg-slate-800/40 px-6 py-1">
           {TABS.map((tab) => {
             const active = activeTab === tab.id;
             return (
@@ -332,20 +342,20 @@ export const GovernmentDashboard: React.FC<GovernmentDashboardProps> = ({
                 key={tab.id}
                 type="button"
                 onClick={() => setActiveTab(tab.id)}
-                className={`flex shrink-0 items-center gap-1.5 rounded-xl px-3.5 py-2 text-xs font-bold transition-colors ${
+                className={`flex shrink-0 items-center gap-2 border-b-2 px-3.5 py-3 text-xs font-bold transition-all ${
                   active
-                    ? 'bg-[#0E7C86] text-white shadow-xs'
-                    : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900'
+                    ? 'border-teal-400 bg-teal-500/10 text-teal-300'
+                    : 'border-transparent text-slate-400 hover:bg-slate-800/40 hover:text-slate-200'
                 }`}
               >
                 {tab.icon}
                 <span>{tab.label}</span>
                 {typeof tab.badge === 'number' && tab.badge > 0 && (
                   <span
-                    className={`rounded-full px-1.5 py-0.2 font-mono text-[10px] tabular-nums ${
+                    className={`flex h-5 w-5 items-center justify-center rounded-full font-mono text-[10px] font-black ${
                       active
-                        ? 'bg-white text-[#0E7C86]'
-                        : 'bg-amber-500 text-white'
+                        ? 'bg-amber-400 text-slate-950'
+                        : 'bg-amber-500 text-slate-950'
                     }`}
                   >
                     {tab.badge}
@@ -357,14 +367,14 @@ export const GovernmentDashboard: React.FC<GovernmentDashboardProps> = ({
         </div>
 
         {/* Main Scrollable Content Area */}
-        <div className="flex-1 overflow-y-auto p-5">
+        <div className="flex-1 overflow-y-auto p-6 bg-slate-950/60">
           {errorMsg && (
-            <div className="mb-4 flex items-center justify-between gap-3 rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-xs text-red-800">
+            <div className="mb-4 flex items-center justify-between gap-3 rounded-2xl border border-rose-500/40 bg-rose-950/30 px-4 py-3 text-xs font-semibold text-rose-300">
               <span>{errorMsg}</span>
               <button
                 type="button"
                 onClick={() => setErrorMsg(null)}
-                className="font-bold underline"
+                className="font-bold underline hover:text-rose-200"
               >
                 Tutup
               </button>
@@ -372,28 +382,28 @@ export const GovernmentDashboard: React.FC<GovernmentDashboardProps> = ({
           )}
 
           {loading && !uhiData ? (
-            <div className="flex h-64 flex-col items-center justify-center gap-2 text-xs text-slate-500">
-              <Loader2 className="h-6 w-6 animate-spin text-[#0E7C86]" />
-              <span>Mengambil data spasial...</span>
+            <div className="flex h-64 flex-col items-center justify-center gap-2 text-xs text-slate-400">
+              <Loader2 className="h-6 w-6 animate-spin text-teal-400" />
+              <span>Mengambil data spasial analitik...</span>
             </div>
           ) : (
             <>
               {/* TAB 1: UHI HOTSPOTS */}
               {activeTab === 'uhi' && (
-                <div className="space-y-5">
+                <div className="space-y-6">
                   {warnings.length > 0 && (
                     <div className="space-y-2">
                       {warnings.map((w, idx) => (
                         <div
                           key={idx}
-                          className="flex items-start gap-2.5 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-xs text-amber-900"
+                          className="flex items-start gap-2.5 rounded-2xl border border-amber-500/40 bg-amber-950/20 px-4 py-3 text-xs text-amber-200"
                         >
-                          <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-600" />
+                          <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-400" />
                           <div>
                             <p className="font-bold">
                               [{w.severity.toUpperCase()}] {w.title}
                             </p>
-                            <p className="mt-0.5 text-amber-800">
+                            <p className="mt-0.5 text-amber-300">
                               {w.description}
                             </p>
                           </div>
@@ -404,39 +414,48 @@ export const GovernmentDashboard: React.FC<GovernmentDashboardProps> = ({
 
                   {uhiData && (
                     <>
-                      <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-                        <div className="rounded-2xl border border-slate-200 bg-white p-4">
-                          <p className="text-xs font-medium text-slate-500">
+                      <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+                        <div className="rounded-2xl border border-slate-700 bg-slate-800/80 p-4">
+                          <p className="text-xs font-semibold text-slate-400">
                             Total Segmen Terpantau
                           </p>
-                          <p className="mt-1 font-mono text-2xl font-extrabold text-slate-900 tabular-nums">
+                          <p className="mt-1 font-mono text-2xl font-black text-white tabular-nums">
                             {uhiData.summary.total_segments.toLocaleString(
                               'id-ID'
                             )}
                           </p>
+                          <p className="mt-1 text-[11px] text-teal-400">
+                            Jaringan jalan pejalan kaki Surabaya
+                          </p>
                         </div>
-                        <div className="rounded-2xl border border-slate-200 bg-white p-4">
-                          <p className="text-xs font-medium text-slate-500">
+                        <div className="rounded-2xl border border-rose-500/40 bg-rose-950/20 p-4">
+                          <p className="text-xs font-semibold text-rose-300">
                             Segmen Kritis (TCS &lt; 0.40)
                           </p>
-                          <p className="mt-1 font-mono text-2xl font-extrabold text-red-700 tabular-nums">
+                          <p className="mt-1 font-mono text-2xl font-black text-rose-400 tabular-nums">
                             {uhiData.summary.critical_segments.toLocaleString(
                               'id-ID'
                             )}
                           </p>
+                          <p className="mt-1 text-[11px] text-slate-400">
+                            Area rentan sengatan heat stress
+                          </p>
                         </div>
-                        <div className="rounded-2xl border border-slate-200 bg-white p-4">
-                          <p className="text-xs font-medium text-slate-500">
+                        <div className="rounded-2xl border border-slate-700 bg-slate-800/80 p-4">
+                          <p className="text-xs font-semibold text-slate-400">
                             Rata-Rata TCS Kota Surabaya
                           </p>
-                          <p className="mt-1 font-mono text-2xl font-extrabold text-[#0E7C86] tabular-nums">
+                          <p className="mt-1 font-mono text-2xl font-black text-teal-400 tabular-nums">
                             {uhiData.summary.avg_city_tcs.toFixed(3)}
+                          </p>
+                          <p className="mt-1 text-[11px] text-slate-400">
+                            Indeks kenyamanan termal kota
                           </p>
                         </div>
                       </div>
 
                       {formatDataAsOf(uhiData.summary.data_as_of) && (
-                        <p className="text-[11px] font-medium text-slate-800">
+                        <p className="text-[11px] font-medium text-slate-400">
                           Data per {formatDataAsOf(uhiData.summary.data_as_of)}{' '}
                           WIB
                           {uhiData.summary.conditions_hour != null &&
@@ -448,7 +467,7 @@ export const GovernmentDashboard: React.FC<GovernmentDashboardProps> = ({
                         tabIndex={0}
                         role="region"
                         aria-labelledby="uhi-table-caption"
-                        className="table-wrapper"
+                        className="table-wrapper-dark"
                       >
                         <table
                           style={
@@ -464,26 +483,26 @@ export const GovernmentDashboard: React.FC<GovernmentDashboardProps> = ({
                           <caption id="uhi-table-caption" className="sr-only">
                             Daftar titik panas Urban Heat Island Kota Surabaya
                           </caption>
-                          <thead className="bg-slate-50 text-[11px] font-semibold text-slate-600">
+                          <thead className="border-b border-slate-700 bg-slate-900/90 text-[11px] font-bold uppercase tracking-wider text-slate-300">
                             <tr>
-                              <th className="border-b border-slate-200 px-4 py-2.5">
+                              <th className="px-4 py-3">
                                 Nama Jalan / Segmen
                               </th>
-                              <th className="border-b border-slate-200 px-4 py-2.5">
+                              <th className="px-4 py-3">
                                 Suhu Permukaan (Estimasi)
                               </th>
-                              <th className="border-b border-slate-200 px-4 py-2.5">
+                              <th className="px-4 py-3">
                                 Rasio Teduh
                               </th>
-                              <th className="border-b border-slate-200 px-4 py-2.5">
+                              <th className="px-4 py-3">
                                 Skor TCS
                               </th>
-                              <th className="border-b border-slate-200 px-4 py-2.5 text-right">
+                              <th className="px-4 py-3 text-right">
                                 Inspeksi Peta
                               </th>
                             </tr>
                           </thead>
-                          <tbody className="divide-y divide-slate-100">
+                          <tbody className="divide-y divide-slate-800">
                             {uhiData.hotspots.map((h) => {
                               const center = extractGeometryCenter(h.geometry);
                               const grade = getTcsGrade(h.avg_tcs);
@@ -492,39 +511,39 @@ export const GovernmentDashboard: React.FC<GovernmentDashboardProps> = ({
                               return (
                                 <tr
                                   key={h.segment_id}
-                                  className="hover:bg-slate-50/80"
+                                  className="transition-colors hover:bg-slate-800/60"
                                 >
                                   <th
                                     scope="row"
-                                    className="px-4 py-2.5 font-semibold text-slate-900"
+                                    className="px-4 py-3 font-semibold text-white"
                                   >
                                     <div>{name}</div>
                                     <div className="font-mono text-[10px] font-normal text-slate-400">
                                       Segmen #{h.segment_id}
                                     </div>
                                   </th>
-                                  <td className="px-4 py-2.5 font-mono font-semibold text-orange-700 tabular-nums">
+                                  <td className="px-4 py-3 font-mono font-semibold text-orange-400 tabular-nums">
                                     {h.avg_lst.toFixed(1)}°C
                                   </td>
-                                  <td className="px-4 py-2.5 font-mono text-slate-600 tabular-nums">
+                                  <td className="px-4 py-3 font-mono text-slate-300 tabular-nums">
                                     {Math.round(h.shade_ratio * 100)}%
                                   </td>
-                                  <td className="px-4 py-2.5 font-mono tabular-nums">
+                                  <td className="px-4 py-3 font-mono tabular-nums">
                                     <span
-                                      className="rounded px-1.5 py-0.5 text-[11px] font-bold text-white"
+                                      className="rounded-full px-2.5 py-0.5 text-[11px] font-bold text-white shadow-xs"
                                       style={{ backgroundColor: grade.color }}
                                     >
                                       {h.avg_tcs.toFixed(3)}
                                     </span>
                                   </td>
-                                  <td className="px-4 py-2.5 text-right">
+                                  <td className="px-4 py-3 text-right">
                                     {center && (
                                       <button
                                         type="button"
                                         onClick={() =>
                                           handleInspectOnMap(center, name)
                                         }
-                                        className="inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-2.5 py-1 text-[11px] font-semibold text-slate-700 hover:bg-teal-50 hover:text-[#0E7C86]"
+                                        className="inline-flex items-center gap-1 rounded-xl border border-teal-500/40 bg-slate-800 px-2.5 py-1 text-[11px] font-semibold text-teal-300 transition-colors hover:bg-teal-600/30 hover:text-white"
                                       >
                                         <MapPin className="h-3 w-3" />
                                         <span>Lihat di Peta</span>
@@ -548,7 +567,7 @@ export const GovernmentDashboard: React.FC<GovernmentDashboardProps> = ({
                   tabIndex={0}
                   role="region"
                   aria-labelledby="corridors-caption"
-                  className="table-wrapper"
+                  className="table-wrapper-dark"
                 >
                   <table
                     style={
@@ -565,67 +584,67 @@ export const GovernmentDashboard: React.FC<GovernmentDashboardProps> = ({
                     <caption id="corridors-caption" className="sr-only">
                       Peringkat koridor prioritas penghijauan Kota Surabaya
                     </caption>
-                    <thead className="bg-slate-50 text-[11px] font-semibold text-slate-600">
+                    <thead className="border-b border-slate-700 bg-slate-900/90 text-[11px] font-bold uppercase tracking-wider text-slate-300">
                       <tr>
-                        <th className="border-b border-slate-200 px-4 py-2.5">
+                        <th className="px-4 py-3">
                           Koridor Jalan
                         </th>
-                        <th className="border-b border-slate-200 px-4 py-2.5">
+                        <th className="px-4 py-3">
                           Skor Prioritas
                         </th>
-                        <th className="border-b border-slate-200 px-4 py-2.5">
+                        <th className="px-4 py-3">
                           Rata-Rata TCS
                         </th>
-                        <th className="border-b border-slate-200 px-4 py-2.5">
+                        <th className="px-4 py-3">
                           Akses Transit
                         </th>
-                        <th className="border-b border-slate-200 px-4 py-2.5">
+                        <th className="px-4 py-3">
                           Halte Terdekat
                         </th>
-                        <th className="border-b border-slate-200 px-4 py-2.5">
+                        <th className="px-4 py-3">
                           Rekomendasi Intervensi Fisik
                         </th>
                       </tr>
                     </thead>
-                    <tbody className="divide-y divide-slate-100">
+                    <tbody className="divide-y divide-slate-800">
                       {corridors.map((c, idx) => {
                         const grade = getTcsGrade(c.avg_tcs);
                         return (
                           <tr
                             key={`${c.corridor_name}-${idx}`}
-                            className="hover:bg-slate-50/80"
+                            className="transition-colors hover:bg-slate-800/60"
                           >
                             <th
                               scope="row"
-                              className="px-4 py-3 font-semibold text-slate-900"
+                              className="px-4 py-3 font-semibold text-white"
                             >
                               <div>{c.corridor_name}</div>
                               <div className="text-[10px] font-normal text-slate-400">
                                 {c.segments.length} segmen terhubung
                               </div>
                             </th>
-                            <td className="px-4 py-3 font-mono font-extrabold text-slate-900 tabular-nums">
+                            <td className="px-4 py-3 font-mono font-extrabold text-amber-400 tabular-nums">
                               {c.priority_score.toFixed(3)}
                             </td>
                             <td className="px-4 py-3 font-mono tabular-nums">
                               <span
-                                className="rounded px-1.5 py-0.5 text-[11px] font-bold text-white"
+                                className="rounded-full px-2.5 py-0.5 text-[11px] font-bold text-white shadow-xs"
                                 style={{ backgroundColor: grade.color }}
                               >
                                 {c.avg_tcs.toFixed(3)}
                               </span>
                             </td>
-                            <td className="px-4 py-3 capitalize text-slate-700">
+                            <td className="px-4 py-3 capitalize text-slate-200">
                               {c.transit_access === 'high'
                                 ? 'Tinggi'
                                 : c.transit_access === 'medium'
                                   ? 'Sedang'
                                   : 'Rendah'}
                             </td>
-                            <td className="px-4 py-3 text-slate-600">
+                            <td className="px-4 py-3 text-slate-400">
                               {c.nearest_transit ?? '—'}
                             </td>
-                            <td className="px-4 py-3 font-medium text-slate-800">
+                            <td className="px-4 py-3 font-medium text-slate-200">
                               {c.recommendation}
                             </td>
                           </tr>
@@ -639,34 +658,34 @@ export const GovernmentDashboard: React.FC<GovernmentDashboardProps> = ({
               {/* TAB 3: WALKABILITY & TRANSIT ACCESS */}
               {activeTab === 'walkability' && walkability && (
                 <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
-                  <div className="rounded-2xl border border-slate-200 bg-white p-5">
-                    <p className="text-xs font-medium text-slate-500">
+                  <div className="rounded-2xl border border-slate-700 bg-slate-800/80 p-5">
+                    <p className="text-xs font-semibold text-slate-400">
                       Total Titik Halte / Transit Surabaya
                     </p>
-                    <p className="mt-2 font-mono text-3xl font-extrabold text-slate-900 tabular-nums">
+                    <p className="mt-2 font-mono text-3xl font-black text-white tabular-nums">
                       {walkability.total_transit_stops.toLocaleString('id-ID')}
                     </p>
-                    <p className="mt-1 text-xs text-slate-500">
+                    <p className="mt-1 text-xs text-slate-400">
                       Suroboyo Bus, WiraWiri, & simpul angkutan umum
                     </p>
                   </div>
 
-                  <div className="rounded-2xl border border-slate-200 bg-white p-5">
-                    <p className="text-xs font-medium text-slate-500">
+                  <div className="rounded-2xl border border-slate-700 bg-slate-800/80 p-5">
+                    <p className="text-xs font-semibold text-slate-400">
                       Halte Berlingkungan Nyaman (TCS &gt; 0.55, radius ±780 m)
                     </p>
-                    <p className="mt-2 font-mono text-3xl font-extrabold text-emerald-700 tabular-nums">
+                    <p className="mt-2 font-mono text-3xl font-black text-emerald-400 tabular-nums">
                       {walkability.comfortable_stops.toLocaleString(
                         'id-ID'
                       )}{' '}
-                      <span className="text-base font-bold text-slate-500">
+                      <span className="text-base font-bold text-slate-400">
                         ({walkability.comfortable_percentage}%
                         {walkability.conditions_hour != null && ' saat jam terpanas'})
                       </span>
                     </p>
-                    <div className="mt-3 h-2 w-full overflow-hidden rounded-full bg-slate-100">
+                    <div className="mt-3 h-2 w-full overflow-hidden rounded-full bg-slate-700">
                       <div
-                        className="h-full rounded-full bg-emerald-600"
+                        className="h-full rounded-full bg-emerald-500"
                         style={{
                           width: `${Math.min(100, walkability.comfortable_percentage)}%`,
                         }}
@@ -674,14 +693,14 @@ export const GovernmentDashboard: React.FC<GovernmentDashboardProps> = ({
                     </div>
                   </div>
 
-                  <div className="rounded-2xl border border-slate-200 bg-white p-5">
-                    <p className="text-xs font-medium text-slate-500">
+                  <div className="rounded-2xl border border-slate-700 bg-slate-800/80 p-5">
+                    <p className="text-xs font-semibold text-slate-400">
                       Indeks TCS Kota (24 Jam Terakhir)
                     </p>
-                    <p className="mt-2 font-mono text-3xl font-extrabold text-[#0E7C86] tabular-nums">
+                    <p className="mt-2 font-mono text-3xl font-black text-teal-400 tabular-nums">
                       {walkability.avg_tcs_city.toFixed(3)}
                     </p>
-                    <p className="mt-1 text-xs text-slate-500">
+                    <p className="mt-1 text-xs text-slate-400">
                       Standar akses nyaman: rata-rata koridor &gt; 0.55 dalam
                       radius 750 m
                     </p>
@@ -703,14 +722,14 @@ export const GovernmentDashboard: React.FC<GovernmentDashboardProps> = ({
                 <div className="space-y-6">
                   {/* Pending Queue */}
                   <div>
-                    <h3 className="mb-3 text-sm font-bold text-slate-900">
+                    <h3 className="mb-3 text-sm font-bold text-white">
                       Antrean Verifikasi Laporan Warga ({pendingReports.length})
                     </h3>
 
                     {pendingReports.length === 0 ? (
-                      <div className="rounded-2xl border border-slate-200 bg-white p-6 text-center text-xs text-slate-500">
+                      <div className="rounded-2xl border border-slate-700 bg-slate-800/60 p-6 text-center text-xs text-slate-400">
                         Tidak ada laporan berstatus{' '}
-                        <code className="font-mono">PENDING_REVIEW</code> saat
+                        <code className="font-mono text-teal-300">PENDING_REVIEW</code> saat
                         ini.
                       </div>
                     ) : (
@@ -720,22 +739,22 @@ export const GovernmentDashboard: React.FC<GovernmentDashboardProps> = ({
                           return (
                             <div
                               key={rep.id}
-                              className="space-y-3 rounded-2xl border border-slate-200 bg-white p-4"
+                              className="space-y-3 rounded-2xl border border-slate-700 bg-slate-800/80 p-4"
                             >
                               <div className="flex items-start justify-between gap-2">
                                 <div>
-                                  <span className="inline-block rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-bold text-amber-900 uppercase">
+                                  <span className="inline-block rounded-full border border-amber-500/30 bg-amber-500/20 px-2 py-0.5 text-[10px] font-bold uppercase text-amber-300">
                                     {rep.category} • {rep.severity ?? 'MEDIUM'}
                                   </span>
                                   {rep.ai_suggested && (
-                                    <span className="ml-1.5 inline-block rounded-full bg-teal-50 px-2 py-0.5 text-[10px] font-semibold text-[#0E7C86]">
+                                    <span className="ml-1.5 inline-block rounded-full border border-teal-500/30 bg-teal-500/20 px-2 py-0.5 text-[10px] font-semibold text-teal-300">
                                       AI{' '}
                                       {rep.ai_confidence
                                         ? `${Math.round(rep.ai_confidence * 100)}%`
                                         : ''}
                                     </span>
                                   )}
-                                  <p className="mt-1 font-mono text-[11px] text-slate-500 tabular-nums">
+                                  <p className="mt-1 font-mono text-[11px] text-slate-400 tabular-nums">
                                     {rep.lat.toFixed(5)}, {rep.lon.toFixed(5)}
                                     {rep.segment_id
                                       ? ` • Segmen #${rep.segment_id}`
@@ -750,15 +769,15 @@ export const GovernmentDashboard: React.FC<GovernmentDashboardProps> = ({
                                       rep.description
                                     )
                                   }
-                                  className="inline-flex items-center gap-1 rounded-lg border border-slate-200 px-2.5 py-1 text-[11px] font-semibold text-slate-700 hover:bg-slate-50"
+                                  className="inline-flex items-center gap-1 rounded-lg border border-slate-700 bg-slate-800 px-2.5 py-1 text-[11px] font-semibold text-slate-300 hover:bg-slate-700 hover:text-white"
                                 >
-                                  <MapPin className="h-3 w-3 text-[#0E7C86]" />
+                                  <MapPin className="h-3 w-3 text-teal-400" />
                                   <span>Peta</span>
                                 </button>
                               </div>
 
                               <div>
-                                <label className="mb-1 block text-[11px] font-semibold text-slate-600">
+                                <label className="mb-1 block text-[11px] font-semibold text-slate-400">
                                   Deskripsi Publik (dapat disunting sebelum
                                   dipublikasikan)
                                 </label>
@@ -773,7 +792,7 @@ export const GovernmentDashboard: React.FC<GovernmentDashboardProps> = ({
                                       [rep.id]: e.target.value,
                                     }))
                                   }
-                                  className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-1.5 text-xs text-slate-900 focus:border-[#0E7C86] focus:bg-white focus:outline-none"
+                                  className="w-full rounded-xl border border-slate-700 bg-slate-900 p-2.5 text-xs text-slate-100 placeholder:text-slate-500 focus:border-teal-500 focus:outline-none"
                                 />
                               </div>
 
@@ -788,13 +807,13 @@ export const GovernmentDashboard: React.FC<GovernmentDashboardProps> = ({
                                     }))
                                   }
                                   placeholder="Alasan tolak (opsional)..."
-                                  className="min-w-36 flex-1 rounded-xl border border-slate-200 px-2.5 py-1.5 text-xs text-slate-700"
+                                  className="min-w-36 flex-1 rounded-xl border border-slate-700 bg-slate-900 px-2.5 py-1.5 text-xs text-slate-200 placeholder:text-slate-500 focus:border-teal-500 focus:outline-none"
                                 />
                                 <button
                                   type="button"
                                   disabled={busy}
                                   onClick={() => void handleReject(rep)}
-                                  className="inline-flex items-center gap-1 rounded-xl border border-red-200 bg-red-50 px-3 py-1.5 text-xs font-bold text-red-700 hover:bg-red-100 disabled:opacity-50"
+                                  className="inline-flex items-center gap-1 rounded-xl border border-rose-500/40 bg-rose-950/20 px-3 py-1.5 text-xs font-bold text-rose-300 transition-colors hover:bg-rose-900/40 disabled:opacity-50"
                                 >
                                   <XCircle className="h-3.5 w-3.5" />
                                   <span>Tolak</span>
@@ -803,7 +822,7 @@ export const GovernmentDashboard: React.FC<GovernmentDashboardProps> = ({
                                   type="button"
                                   disabled={busy}
                                   onClick={() => void handleApprove(rep)}
-                                  className="inline-flex items-center gap-1 rounded-xl bg-emerald-600 px-3.5 py-1.5 text-xs font-bold text-white hover:bg-emerald-700 disabled:opacity-50"
+                                  className="inline-flex items-center gap-1 rounded-xl bg-emerald-600 px-3.5 py-1.5 text-xs font-bold text-white shadow-md transition-colors hover:bg-emerald-500 disabled:opacity-50"
                                 >
                                   <Check className="h-3.5 w-3.5" />
                                   <span>Setujui & Tayangkan</span>
@@ -818,11 +837,11 @@ export const GovernmentDashboard: React.FC<GovernmentDashboardProps> = ({
 
                   {/* Active Map Alerts Management */}
                   <div>
-                    <h3 className="mb-3 text-sm font-bold text-slate-900">
+                    <h3 className="mb-3 text-sm font-bold text-white">
                       Pin Peringatan Aktif di Peta Publik ({activeAlerts.length})
                     </h3>
                     {activeAlerts.length === 0 ? (
-                      <div className="rounded-2xl border border-slate-200 bg-white p-5 text-center text-xs text-slate-500">
+                      <div className="rounded-2xl border border-slate-700 bg-slate-800/60 p-5 text-center text-xs text-slate-400">
                         Belum ada pin peringatan aktif di peta.
                       </div>
                     ) : (
@@ -830,14 +849,14 @@ export const GovernmentDashboard: React.FC<GovernmentDashboardProps> = ({
                         {activeAlerts.map((al) => (
                           <div
                             key={al.id}
-                            className="flex items-center justify-between gap-3 rounded-2xl border border-slate-200 bg-white p-3.5 text-xs"
+                            className="flex items-center justify-between gap-3 rounded-2xl border border-slate-700 bg-slate-800/80 p-3.5 text-xs"
                           >
                             <div className="min-w-0">
-                              <p className="font-bold text-slate-900">
+                              <p className="font-bold text-white">
                                 {al.category.toUpperCase()} •{' '}
                                 {al.severity ?? 'MEDIUM'}
                               </p>
-                              <p className="mt-0.5 truncate text-slate-600">
+                              <p className="mt-0.5 truncate text-slate-300">
                                 {al.description}
                               </p>
                             </div>
@@ -850,16 +869,16 @@ export const GovernmentDashboard: React.FC<GovernmentDashboardProps> = ({
                                     al.description
                                   )
                                 }
-                                className="rounded-lg border border-slate-200 p-1.5 text-slate-600 hover:bg-slate-50"
+                                className="rounded-lg border border-slate-700 bg-slate-800 p-1.5 text-slate-300 hover:bg-slate-700 hover:text-white"
                                 title="Lihat di Peta"
                               >
-                                <MapPin className="h-3.5 w-3.5" />
+                                <MapPin className="h-3.5 w-3.5 text-teal-400" />
                               </button>
                               <button
                                 type="button"
                                 disabled={busyActionId === al.id}
                                 onClick={() => void handleRetireAlert(al.id)}
-                                className="inline-flex items-center gap-1 rounded-lg border border-red-200 bg-red-50 px-2.5 py-1.5 text-[11px] font-bold text-red-700 hover:bg-red-100 disabled:opacity-50"
+                                className="inline-flex items-center gap-1 rounded-lg border border-rose-500/40 bg-rose-950/30 px-2.5 py-1.5 text-[11px] font-bold text-rose-300 transition-colors hover:bg-rose-900/50 disabled:opacity-50"
                               >
                                 <Trash2 className="h-3.5 w-3.5" />
                                 <span>Cabut</span>
@@ -873,21 +892,21 @@ export const GovernmentDashboard: React.FC<GovernmentDashboardProps> = ({
 
                   {/* Historical Log Summary */}
                   {allReports.length > 0 && (
-                    <details className="rounded-2xl border border-slate-200 bg-white text-xs">
-                      <summary className="cursor-pointer px-4 py-3 font-bold text-slate-800">
+                    <details className="rounded-2xl border border-slate-700 bg-slate-800/80 text-xs">
+                      <summary className="cursor-pointer px-4 py-3 font-bold text-slate-200 hover:text-white">
                         Arsip Seluruh Laporan Masuk ({allReports.length})
                       </summary>
-                      <div className="divide-y divide-slate-100 border-t border-slate-100 px-4 py-1">
+                      <div className="divide-y divide-slate-700 border-t border-slate-700 px-4 py-1">
                         {allReports.slice(0, 25).map((r) => (
                           <div
                             key={r.id}
                             className="flex items-center justify-between gap-2 py-2"
                           >
                             <div className="min-w-0">
-                              <span className="font-semibold text-slate-800">
+                              <span className="font-semibold text-white">
                                 [{r.status}]
                               </span>{' '}
-                              <span className="text-slate-600">
+                              <span className="text-slate-300">
                                 {r.final_description || r.description}
                               </span>
                             </div>

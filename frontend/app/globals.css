@@ -48,14 +48,14 @@ body {
   box-shadow: 0 14px 32px -8px rgba(2, 6, 23, 0.45);
 }
 
-/* Modern Native <dialog> Best Practices (No unconditional display override!) */
-dialog {
-  padding: 0;
-  border: none;
-  background: transparent;
-  color: inherit;
-  max-width: none;
-  max-height: none;
+/* Modern Native <dialog> Base Styling in @layer base to preserve Tailwind utility overrides */
+@layer base {
+  dialog {
+    margin: auto;
+    padding: 0;
+    border: none;
+    color: inherit;
+  }
 }
 
 dialog:modal {
@@ -63,8 +63,9 @@ dialog:modal {
 }
 
 dialog::backdrop {
-  background: rgba(15, 23, 42, 0.48);
-  backdrop-filter: blur(4px);
+  background: rgba(15, 23, 42, 0.70);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
   overflow: hidden;
   overscroll-behavior: contain;
 }
@@ -97,6 +98,35 @@ dialog::backdrop {
   inset-inline-start: 0;
   z-index: 1;
   background: #ffffff;
+}
+
+.table-wrapper-dark {
+  overflow: auto;
+  max-inline-size: 100%;
+  max-block-size: min(560px, 68dvh);
+  container-type: inline-size;
+  border-radius: 0.75rem;
+  border: 1px solid #334155;
+  background: #090d16;
+}
+
+.table-wrapper-dark table {
+  border-collapse: separate;
+  border-spacing: 0;
+  width: 100%;
+}
+
+.table-wrapper-dark thead {
+  position: sticky;
+  inset-block-start: 0;
+  z-index: 2;
+}
+
+.table-wrapper-dark tbody th {
+  position: sticky;
+  inset-inline-start: 0;
+  z-index: 1;
+  background: #090d16;
 }
 
 @container (width < 600px) {
@@ -185,10 +215,35 @@ dialog::backdrop {
   background: rgba(100, 116, 139, 0.8);
 }
 
-/* MapLibre Attribution Compact Polish */
+/* MapLibre Attribution & GPU Compositor Layer Promotion */
+.maplibregl-canvas-container {
+  transform: translateZ(0);
+  backface-visibility: hidden;
+}
+
 .maplibregl-ctrl-attrib {
   font-size: 10px !important;
   background: rgba(255, 255, 255, 0.72) !important;
   backdrop-filter: blur(6px);
   border-radius: 6px !important;
+}
+
+/* Keyboard Focus Indicator (WCAG 2.4.7 / 1.4.11) */
+:where(a:any-link, button, input, select, textarea, [role="button"]):focus-visible {
+  outline: 2px solid var(--teduh-teal);
+  outline-offset: 2px;
+}
+
+/* Targeted Reduced Motion Dampening (No global 0.01ms anti-pattern) */
+.animate-spin {
+  @media (prefers-reduced-motion: reduce) {
+    animation: none !important;
+    opacity: 0.75;
+  }
+}
+
+.animate-pulse {
+  @media (prefers-reduced-motion: reduce) {
+    animation: none !important;
+  }
 }
